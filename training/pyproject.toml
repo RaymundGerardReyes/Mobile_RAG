@@ -1,6 +1,6 @@
 [project]
 name = "ai-tutor-training"
-version = "0.2.0"
+version = "0.3.0"
 description = "Data preparation and training pipeline for AI Tutor"
 requires-python = ">=3.11"
 dependencies = [
