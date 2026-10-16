@@ -36,3 +36,9 @@ export * from './data/content_pack/content_pack_importer.js';
 // Diagnostics
 export * from './diagnostics/diagnostics_logger.js';
 
+// App & Controller
+export * from './app/review_session_controller.js';
+
+// Theme & Tokens
+export * from './theme/tokens.js';
+

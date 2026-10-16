@@ -96,6 +96,17 @@ export class InitializeApp {
     // Execute DDL
     await this.db.execute(INITIAL_SCHEMA_SQL);
 
+    // Defensive migration: ensure `score` column exists if opening an older database
+    const columns = await this.db.query<{ name: string }>(
+      "PRAGMA table_info('answer_attempts')"
+    );
+    const hasScoreColumn = columns.some((col) => col.name === 'score');
+    if (columns.length > 0 && !hasScoreColumn) {
+      await this.db.execute(
+        'ALTER TABLE answer_attempts ADD COLUMN score REAL NOT NULL DEFAULT 0.0;'
+      );
+    }
+
     // Record migration version if not recorded
     const migration = await this.db.queryOne<{ version: number }>(
       'SELECT version FROM schema_migrations WHERE version = ?',

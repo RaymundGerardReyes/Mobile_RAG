@@ -113,6 +113,7 @@ CREATE TABLE answer_attempts (
     selected_choice_id TEXT REFERENCES choices(id),
     free_text_answer TEXT,
     is_correct INTEGER NOT NULL,
+    score REAL NOT NULL DEFAULT 0.0,
     duration_ms INTEGER NOT NULL,
     answered_at TEXT NOT NULL
 );
