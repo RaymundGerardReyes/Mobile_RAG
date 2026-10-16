@@ -8,10 +8,12 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test dist/tests/**/*.test.js"
   },
-  "dependencies": {},
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/react": "^19.3.0",
+    "@types/react-native": "^0.72.8",
+    "react": "^19.3.1",
+    "react-native": "^0.88.0",
     "typescript": "^5.6.0"
   }
 }
-

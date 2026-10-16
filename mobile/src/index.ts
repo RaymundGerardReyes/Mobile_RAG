@@ -29,6 +29,7 @@ export * from './ai/runtime/llama_rn_adapter.js';
 // Data & SQLite
 export * from './data/sqlite/schema.js';
 export * from './data/sqlite/sqlite_database.js';
+export * from './data/sqlite/expo_sqlite_database.js';
 export * from './data/sqlite/sqlite_question_repository.js';
 export * from './data/sqlite/sqlite_passage_retriever.js';
 export * from './data/content_pack/content_pack_importer.js';
@@ -41,4 +42,8 @@ export * from './app/review_session_controller.js';
 
 // Theme & Tokens
 export * from './theme/tokens.js';
+
+// UI Primitives & Screens
+export * from './components/CorePrimitives.js';
+export * from './features/quiz/QuizReviewScreen.js';
 

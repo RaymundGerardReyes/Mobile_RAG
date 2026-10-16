@@ -73,11 +73,13 @@ export const spacing = {
   xs: 4,
   sm: 8,
   md: 12,
+  base: 16,
   lg: 16,
   xl: 20,
   xxl: 24,
   xxxl: 32,
   huge: 48,
+  section: 48,
 } as const;
 
 export const radius = {
@@ -144,6 +146,7 @@ export const typography = {
 
 export const controls = {
   minTouchTarget: 44,
+  minimumTouchTarget: 44,
   buttonHeight: 50,
   iconSmall: 16,
   iconMedium: 24,
@@ -185,3 +188,4 @@ export type ThemeTokens = {
   controls: typeof controls;
   motion: typeof motion;
 };
+
