@@ -91,3 +91,4 @@ describe('ExpoSqliteDatabase Adapter', () => {
     }, /Database is closed/);
   });
 });
+
