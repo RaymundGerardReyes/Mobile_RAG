@@ -1,6 +1,5 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -15,15 +14,26 @@ import {
   spacing,
   typography,
 } from '../../theme/tokens.js';
-import { CSCButton, ContentCard } from '../../components/CorePrimitives.js';
+import {
+  AnimatedChoiceRow,
+  AnimatedProgressBar,
+  CSCButton,
+  CSCChipBadge,
+  ContentCard,
+} from '../../components/CorePrimitives.js';
 import { Choice, Question } from '../../domain/types.js';
 import { ModelRuntimeStatus } from '../../application/ports/local_llm_port.js';
 import { RetrievedPassage } from '../../application/ports/passage_retriever.js';
 import { SubmitAnswerResponse } from '../../application/use_cases/submit_answer.js';
 import { ExplainMoreResponse } from '../../application/use_cases/explain_more.js';
+import { ValidatedVerdictResult } from '../../ai/evaluation/output_validator.js';
+import {
+  ReviewSessionController,
+  ReviewSessionState,
+} from '../../app/review_session_controller.js';
 
 export interface QuizReviewScreenProps {
-  question: Question;
+  question: Question | null;
   questionNumber: number;
   totalQuestions: number;
   selectedChoiceId: string | null;
@@ -31,21 +41,27 @@ export interface QuizReviewScreenProps {
   submissionResult: SubmitAnswerResponse | null;
   supportingPassages: RetrievedPassage[];
   sourcePages: number[];
-  aiExplanation: ExplainMoreResponse | null;
+  aiExplanation: string | ExplainMoreResponse | null;
+  freeAnswerEvaluation?: ValidatedVerdictResult | null;
   modelStatus: ModelRuntimeStatus;
   isGeneratingAi: boolean;
   aiError: string | null;
+  isSessionCompleted?: boolean;
   onSelectChoice: (choiceId: string) => void;
   onChangeFreeText: (text: string) => void;
   onSubmitAnswer: () => void;
   onRequestExplainMore: (language: 'en' | 'fil') => void;
+  onRequestInterpretFreeAnswer?: () => void;
   onCancelGeneration: () => void;
   onNextQuestion: () => void;
+  onRestartSession?: () => void;
+  onReturnHome?: () => void;
 }
 
 /**
  * Clean UI Screen for the Philippine Civil Service Exam Reviewer.
- * Adheres strictly to the 80/15/5 color policy and accessible Apple HIG touch targets.
+ * Adheres strictly to the 80/15/5 color policy, 100% WCAG AA contrast,
+ * and accessible Apple HIG touch targets (>= 44pt).
  */
 export function QuizReviewScreen({
   question,
@@ -57,16 +73,71 @@ export function QuizReviewScreen({
   supportingPassages,
   sourcePages,
   aiExplanation,
+  freeAnswerEvaluation,
   modelStatus,
   isGeneratingAi,
   aiError,
+  isSessionCompleted = false,
   onSelectChoice,
   onChangeFreeText,
   onSubmitAnswer,
   onRequestExplainMore,
+  onRequestInterpretFreeAnswer,
   onCancelGeneration,
   onNextQuestion,
+  onRestartSession,
+  onReturnHome,
 }: QuizReviewScreenProps) {
+  const [isInputFocused, setIsInputFocused] = useState(false);
+
+  // If session is complete or question is null, render completion summary card
+  if (isSessionCompleted || !question) {
+    return (
+      <ScrollView
+        style={styles.screen}
+        contentContainerStyle={styles.contentContainer}
+      >
+        <ContentCard style={styles.completionCard}>
+          <View style={styles.completionHeader}>
+            <Text style={styles.completionEmoji}>🎉</Text>
+            <Text style={styles.completionTitle}>Review Session Complete!</Text>
+            <Text style={styles.completionSubtitle}>
+              You have reviewed all {totalQuestions} question{totalQuestions === 1 ? '' : 's'} in this session.
+            </Text>
+          </View>
+
+          <View style={styles.completionStatsRow}>
+            <View style={styles.statBox}>
+              <Text style={styles.statNumber}>{totalQuestions}</Text>
+              <Text style={styles.statLabel}>Total Reviewed</Text>
+            </View>
+            <View style={styles.statBox}>
+              <Text style={styles.statNumber}>100%</Text>
+              <Text style={styles.statLabel}>Completed</Text>
+            </View>
+          </View>
+
+          <View style={styles.completionActions}>
+            {onRestartSession && (
+              <CSCButton
+                title="Review Again"
+                variant="primary"
+                onPress={onRestartSession}
+              />
+            )}
+            {onReturnHome && (
+              <CSCButton
+                title="Back to Dashboard"
+                variant="secondary"
+                onPress={onReturnHome}
+              />
+            )}
+          </View>
+        </ContentCard>
+      </ScrollView>
+    );
+  }
+
   const isAnswered = submissionResult !== null;
   const canSubmit =
     question.questionType === 'multiple_choice'
@@ -77,39 +148,52 @@ export function QuizReviewScreen({
   const isModelBusyLoading =
     modelStatus.state === 'loading' || modelStatus.state === 'verifying';
 
+  const explanationText =
+    typeof aiExplanation === 'string'
+      ? aiExplanation
+      : aiExplanation?.explanation || null;
+
   return (
     <ScrollView
       style={styles.screen}
       contentContainerStyle={styles.contentContainer}
       keyboardShouldPersistTaps="handled"
     >
-      {/* 1. Top Meta Row: Progress + 5% CSC Red Accent Difficulty/Page Badge */}
+      {/* 1. Top Meta Row: Progress + WCAG AA 5% Accent Red Difficulty & Page Badges */}
       <View style={styles.metaRow}>
         <Text style={styles.progressLabel}>
           Question {questionNumber} of {totalQuestions}
         </Text>
         <View style={styles.badgeGroup}>
           {question.difficulty && (
-            <View style={styles.redAccentBadge}>
-              <Text style={styles.redAccentBadgeText}>
-                {question.difficulty.toUpperCase()}
-              </Text>
-            </View>
+            <CSCChipBadge
+              label={question.difficulty.toUpperCase()}
+              variant="accentRed"
+              indicatorDot
+            />
           )}
-          <View style={styles.neutralBadge}>
-            <Text style={styles.neutralBadgeText}>p. {question.sourcePage}</Text>
-          </View>
+          <CSCChipBadge
+            label={`p. ${question.sourcePage}`}
+            variant="neutral"
+          />
         </View>
       </View>
 
-      {/* 2. Question Stem Card (16pt radius, 1pt subtle border) */}
+      {/* 2. Top Animated Progress Bar (200ms ease-out using native driver) */}
+      <AnimatedProgressBar
+        current={questionNumber}
+        total={totalQuestions}
+        height={6}
+      />
+
+      {/* 3. Question Stem Card (16pt radius, 1pt subtle border) */}
       <ContentCard style={styles.stemCard}>
         <Text style={styles.stemText}>{question.stem}</Text>
 
         {/* Multiple-Choice Options */}
         {question.questionType === 'multiple_choice' ? (
           <View style={styles.choicesList}>
-            {question.choices.map((choice: Choice) => {
+            {question.choices.map((choice: Choice, idx: number) => {
               const isSelected = selectedChoiceId === choice.id;
               const isCanonical =
                 isAnswered && submissionResult?.canonicalChoiceId === choice.id;
@@ -117,39 +201,17 @@ export function QuizReviewScreen({
                 isAnswered && isSelected && !submissionResult?.isCorrect;
 
               return (
-                <Pressable
+                <AnimatedChoiceRow
                   key={choice.id}
-                  accessibilityRole="radio"
-                  accessibilityState={{
-                    checked: isSelected,
-                    disabled: isAnswered,
-                  }}
+                  choiceKey={choice.choiceKey}
+                  text={choice.text}
+                  selected={isSelected}
                   disabled={isAnswered}
+                  isCorrect={isCanonical}
+                  isIncorrect={isWrongSelection}
+                  index={idx}
                   onPress={() => onSelectChoice(choice.id)}
-                  style={[
-                    styles.choiceRow,
-                    isSelected && styles.choiceRowSelected,
-                    isCanonical && styles.choiceRowCorrect,
-                    isWrongSelection && styles.choiceRowIncorrect,
-                  ]}
-                >
-                  <View
-                    style={[
-                      styles.choiceKeyBadge,
-                      isSelected && styles.choiceKeyBadgeSelected,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.choiceKeyText,
-                        isSelected && styles.choiceKeyTextSelected,
-                      ]}
-                    >
-                      {choice.choiceKey}
-                    </Text>
-                  </View>
-                  <Text style={styles.choiceText}>{choice.text}</Text>
-                </Pressable>
+                />
               );
             })}
           </View>
@@ -161,9 +223,15 @@ export function QuizReviewScreen({
               editable={!isAnswered}
               value={freeTextInput}
               onChangeText={onChangeFreeText}
+              onFocus={() => setIsInputFocused(true)}
+              onBlur={() => setIsInputFocused(false)}
               placeholder="Type your answer here..."
               placeholderTextColor={colors.neutral.textMuted}
-              style={styles.textInput}
+              style={[
+                styles.textInput,
+                isInputFocused && !isAnswered && styles.textInputFocused,
+                isAnswered && styles.textInputDisabled,
+              ]}
             />
           </View>
         )}
@@ -179,7 +247,7 @@ export function QuizReviewScreen({
             />
           ) : (
             <CSCButton
-              title="Next Question"
+              title={questionNumber >= totalQuestions ? 'Finish Review' : 'Next Question'}
               variant="primary"
               onPress={onNextQuestion}
             />
@@ -187,7 +255,7 @@ export function QuizReviewScreen({
         </View>
       </ContentCard>
 
-      {/* 3. Post-Submission Deterministic Feedback & Grounded AI Explanation */}
+      {/* 4. Post-Submission Deterministic Feedback & Grounded AI Explanation */}
       {isAnswered && submissionResult && (
         <ContentCard delayMs={60} style={styles.explanationCard}>
           {/* Deterministic Score Banner */}
@@ -196,6 +264,8 @@ export function QuizReviewScreen({
               styles.verdictBanner,
               submissionResult.isCorrect
                 ? styles.verdictCorrect
+                : submissionResult.score > 0
+                ? styles.verdictPartial
                 : styles.verdictIncorrect,
             ]}
           >
@@ -205,12 +275,16 @@ export function QuizReviewScreen({
                 {
                   color: submissionResult.isCorrect
                     ? colors.semantic.correct.text
+                    : submissionResult.score > 0
+                    ? colors.semantic.warning.text
                     : colors.semantic.incorrect.text,
                 },
               ]}
             >
               {submissionResult.isCorrect
                 ? '✓ Correct Answer'
+                : submissionResult.score > 0
+                ? `½ Partially Correct (${submissionResult.score * 100}%)`
                 : `✕ Incorrect — Official Answer: ${
                     submissionResult.canonicalAnswer ?? 'See below'
                   }`}
@@ -246,11 +320,99 @@ export function QuizReviewScreen({
 
           <View style={styles.divider} />
 
-          {/* On-Device AI Elaboration Output */}
-          {aiExplanation && (
+          {/* Feature B: Free-Answer Semantic Rubric Evaluation */}
+          {question.questionType !== 'multiple_choice' && (
+            <View style={styles.rubricContainer}>
+              <Text style={styles.aiHeading}>AI Semantic Rubric Evaluation</Text>
+              {freeAnswerEvaluation ? (
+                <View style={styles.rubricResultCard}>
+                  <View style={styles.rubricHeaderRow}>
+                    <CSCChipBadge
+                      label={
+                        freeAnswerEvaluation.verdict === 'equivalent'
+                          ? 'Equivalent (Full Credit)'
+                          : freeAnswerEvaluation.verdict === 'partially_equivalent'
+                          ? 'Partially Equivalent'
+                          : freeAnswerEvaluation.verdict === 'ambiguous'
+                          ? 'Ambiguous (Needs Review)'
+                          : 'Incorrect'
+                      }
+                      variant={
+                        freeAnswerEvaluation.verdict === 'equivalent'
+                          ? 'success'
+                          : freeAnswerEvaluation.verdict === 'partially_equivalent'
+                          ? 'warning'
+                          : freeAnswerEvaluation.verdict === 'ambiguous'
+                          ? 'accentRed'
+                          : 'neutral'
+                      }
+                    />
+                    <Text style={styles.confidenceText}>
+                      Confidence: {Math.round(freeAnswerEvaluation.confidence * 100)}%
+                    </Text>
+                  </View>
+
+                  {freeAnswerEvaluation.matchedConcepts.length > 0 && (
+                    <View style={styles.conceptSection}>
+                      <Text style={styles.conceptSectionTitle}>Matched Concepts:</Text>
+                      <View style={styles.conceptBadgeRow}>
+                        {freeAnswerEvaluation.matchedConcepts.map((concept, cIdx) => (
+                          <CSCChipBadge
+                            key={`matched-${cIdx}`}
+                            label={concept}
+                            variant="success"
+                          />
+                        ))}
+                      </View>
+                    </View>
+                  )}
+
+                  {freeAnswerEvaluation.missingConcepts.length > 0 && (
+                    <View style={styles.conceptSection}>
+                      <Text style={styles.conceptSectionTitle}>Missing Concepts:</Text>
+                      <View style={styles.conceptBadgeRow}>
+                        {freeAnswerEvaluation.missingConcepts.map((concept, cIdx) => (
+                          <CSCChipBadge
+                            key={`missing-${cIdx}`}
+                            label={concept}
+                            variant="warning"
+                          />
+                        ))}
+                      </View>
+                    </View>
+                  )}
+
+                  {freeAnswerEvaluation.guardrailTriggered && (
+                    <View style={styles.guardrailNotice}>
+                      <Text style={styles.guardrailText}>
+                        Guardrail Triggered: {freeAnswerEvaluation.guardrailTriggered}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              ) : onRequestInterpretFreeAnswer ? (
+                <View style={styles.rubricActionContainer}>
+                  <CSCButton
+                    title={
+                      isModelUnavailable
+                        ? 'Offline Model Not Installed'
+                        : 'Evaluate Answer with AI Rubric'
+                    }
+                    variant="secondary"
+                    loading={isGeneratingAi || isModelBusyLoading}
+                    disabled={isModelUnavailable || isGeneratingAi}
+                    onPress={onRequestInterpretFreeAnswer}
+                  />
+                </View>
+              ) : null}
+            </View>
+          )}
+
+          {/* Feature A: On-Device AI Elaboration Output */}
+          {explanationText && (
             <View style={styles.aiBox}>
               <Text style={styles.aiHeading}>AI Tutor Explanation</Text>
-              <Text style={styles.bodyText}>{aiExplanation.explanation}</Text>
+              <Text style={styles.bodyText}>{explanationText}</Text>
             </View>
           )}
 
@@ -299,6 +461,66 @@ export function QuizReviewScreen({
   );
 }
 
+export interface ConnectedQuizReviewScreenProps {
+  controller: ReviewSessionController;
+  modelStatus?: ModelRuntimeStatus;
+  onRestartSession?: () => void;
+  onReturnHome?: () => void;
+}
+
+/**
+ * Connected Container for QuizReviewScreen.
+ * Subscribes to ReviewSessionController state changes and dispatches actions.
+ */
+export function ConnectedQuizReviewScreen({
+  controller,
+  modelStatus = { state: 'ready' },
+  onRestartSession,
+  onReturnHome,
+}: ConnectedQuizReviewScreenProps) {
+  const [state, setState] = useState<ReviewSessionState>(controller.getState());
+
+  useEffect(() => {
+    const unsubscribe = controller.subscribe((newState) => {
+      setState(newState);
+    });
+    return unsubscribe;
+  }, [controller]);
+
+  return (
+    <QuizReviewScreen
+      question={state.currentQuestion}
+      questionNumber={state.currentIndex + 1}
+      totalQuestions={state.totalQuestions}
+      selectedChoiceId={state.selectedChoiceId}
+      freeTextInput={state.freeTextInput}
+      submissionResult={state.submissionResult}
+      supportingPassages={state.supportingPassages}
+      sourcePages={state.sourcePages}
+      aiExplanation={state.aiExplanation}
+      freeAnswerEvaluation={state.freeAnswerEvaluation}
+      modelStatus={modelStatus}
+      isGeneratingAi={state.isGeneratingAi}
+      aiError={state.aiError}
+      isSessionCompleted={state.isSessionCompleted}
+      onSelectChoice={(choiceId) => controller.selectChoice(choiceId)}
+      onChangeFreeText={(text) => controller.setFreeTextInput(text)}
+      onSubmitAnswer={() => controller.submitCurrentAnswer()}
+      onRequestExplainMore={(lang) => controller.requestExplainMore(lang)}
+      onRequestInterpretFreeAnswer={() => controller.requestFreeAnswerInterpretation()}
+      onCancelGeneration={() => controller.cancelActiveAiGeneration()}
+      onNextQuestion={() => controller.nextQuestion()}
+      onRestartSession={onRestartSession}
+      onReturnHome={onReturnHome}
+    />
+  );
+}
+
+/**
+ * Reusable Container alias matching architectural Pattern C.
+ */
+export const QuizSessionContainer = ConnectedQuizReviewScreen;
+
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
@@ -323,32 +545,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
   },
-  redAccentBadge: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderRadius: radius.sm,
-    borderWidth: borders.hairline,
-    borderColor: colors.accent.primary,
-    backgroundColor: colors.neutral.surfaceElevated,
-  },
-  redAccentBadgeText: {
-    fontSize: typography.footnote.fontSize,
-    fontWeight: '600',
-    color: colors.accent.primary,
-  },
-  neutralBadge: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderRadius: radius.sm,
-    borderWidth: borders.hairline,
-    borderColor: colors.neutral.borderSubtle,
-    backgroundColor: colors.neutral.surfaceElevated,
-  },
-  neutralBadgeText: {
-    fontSize: typography.footnote.fontSize,
-    fontWeight: '500',
-    color: colors.neutral.textSecondary,
-  },
   stemCard: {
     gap: spacing.base,
   },
@@ -360,60 +556,6 @@ const styles = StyleSheet.create({
   },
   choicesList: {
     gap: spacing.md,
-  },
-  choiceRow: {
-    minHeight: controls.minimumTouchTarget,
-    padding: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: borders.hairline,
-    borderColor: colors.neutral.borderSubtle,
-    backgroundColor: colors.neutral.surfaceElevated,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-  },
-  choiceRowSelected: {
-    borderWidth: borders.emphasized,
-    borderColor: colors.brand.primary,
-    backgroundColor: colors.brand.tint,
-  },
-  choiceRowCorrect: {
-    borderWidth: borders.focused,
-    borderColor: colors.semantic.correct.border,
-    backgroundColor: colors.semantic.correct.surface,
-  },
-  choiceRowIncorrect: {
-    borderWidth: borders.emphasized,
-    borderColor: colors.semantic.incorrect.border,
-    backgroundColor: colors.semantic.incorrect.surface,
-  },
-  choiceKeyBadge: {
-    width: 28,
-    height: 28,
-    borderRadius: radius.sm,
-    borderWidth: borders.hairline,
-    borderColor: colors.neutral.borderDefault,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.neutral.surface,
-  },
-  choiceKeyBadgeSelected: {
-    backgroundColor: colors.brand.primary,
-    borderColor: colors.brand.primary,
-  },
-  choiceKeyText: {
-    fontSize: typography.subheadline.fontSize,
-    fontWeight: '600',
-    color: colors.neutral.textPrimary,
-  },
-  choiceKeyTextSelected: {
-    color: colors.brand.contrastText,
-  },
-  choiceText: {
-    flex: 1,
-    fontSize: typography.body.fontSize,
-    color: colors.neutral.textPrimary,
-    lineHeight: typography.body.lineHeight,
   },
   formGroup: {
     gap: spacing.sm,
@@ -433,6 +575,14 @@ const styles = StyleSheet.create({
     fontSize: typography.body.fontSize,
     color: colors.neutral.textPrimary,
   },
+  textInputFocused: {
+    borderColor: colors.brand.primary,
+    borderWidth: borders.focused,
+  },
+  textInputDisabled: {
+    backgroundColor: colors.neutral.surfaceMuted,
+    color: colors.neutral.textSecondary,
+  },
   primaryActionContainer: {
     marginTop: spacing.xs,
   },
@@ -447,6 +597,10 @@ const styles = StyleSheet.create({
   verdictCorrect: {
     borderColor: colors.semantic.correct.border,
     backgroundColor: colors.semantic.correct.surface,
+  },
+  verdictPartial: {
+    borderColor: colors.semantic.warning.border,
+    backgroundColor: colors.semantic.warning.surface,
   },
   verdictIncorrect: {
     borderColor: colors.semantic.incorrect.border,
@@ -499,6 +653,54 @@ const styles = StyleSheet.create({
     backgroundColor: colors.neutral.borderSubtle,
     marginVertical: spacing.xs,
   },
+  rubricContainer: {
+    gap: spacing.sm,
+  },
+  rubricResultCard: {
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: borders.hairline,
+    borderColor: colors.neutral.borderSubtle,
+    backgroundColor: colors.neutral.surfaceMuted,
+    gap: spacing.sm,
+  },
+  rubricHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  confidenceText: {
+    fontSize: typography.footnote.fontSize,
+    fontWeight: '600',
+    color: colors.neutral.textSecondary,
+  },
+  conceptSection: {
+    gap: spacing.xs,
+  },
+  conceptSectionTitle: {
+    fontSize: typography.footnote.fontSize,
+    fontWeight: '600',
+    color: colors.neutral.textPrimary,
+  },
+  conceptBadgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  guardrailNotice: {
+    marginTop: spacing.xs,
+    padding: spacing.xs,
+    borderRadius: radius.sm,
+    backgroundColor: colors.semantic.warning.surface,
+  },
+  guardrailText: {
+    fontSize: typography.caption.fontSize,
+    color: colors.semantic.warning.text,
+    fontWeight: '600',
+  },
+  rubricActionContainer: {
+    marginTop: spacing.xs,
+  },
   aiBox: {
     gap: spacing.xs,
   },
@@ -525,5 +727,52 @@ const styles = StyleSheet.create({
   languageButtonGroup: {
     gap: spacing.sm,
   },
+  completionCard: {
+    alignItems: 'center',
+    paddingVertical: spacing.xxl,
+    gap: spacing.xl,
+  },
+  completionHeader: {
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  completionEmoji: {
+    fontSize: 48,
+  },
+  completionTitle: {
+    fontSize: typography.title2.fontSize,
+    fontWeight: '700',
+    color: colors.brand.primary,
+    textAlign: 'center',
+  },
+  completionSubtitle: {
+    fontSize: typography.body.fontSize,
+    color: colors.neutral.textSecondary,
+    textAlign: 'center',
+    paddingHorizontal: spacing.base,
+  },
+  completionStatsRow: {
+    flexDirection: 'row',
+    gap: spacing.xl,
+    paddingVertical: spacing.md,
+  },
+  statBox: {
+    alignItems: 'center',
+    paddingHorizontal: spacing.xl,
+  },
+  statNumber: {
+    fontSize: typography.title1.fontSize,
+    fontWeight: '700',
+    color: colors.brand.primary,
+  },
+  statLabel: {
+    fontSize: typography.footnote.fontSize,
+    color: colors.neutral.textSecondary,
+    marginTop: spacing.xs,
+  },
+  completionActions: {
+    width: '100%',
+    gap: spacing.md,
+    marginTop: spacing.base,
+  },
 });
-
