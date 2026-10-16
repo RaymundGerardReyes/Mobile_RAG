@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "model-manifest",
+  "type": "object",
+  "required": [
+    "manifest_id",
+    "model_name",
+    "model_revision",
+    "quantization",
+    "file_sha256",
+    "file_size_bytes",
+    "license",
+    "runtime"
+  ],
+  "properties": {
+    "manifest_id": {
+      "type": "string"
+    },
+    "model_name": {
+      "type": "string"
+    },
+    "model_revision": {
+      "type": "string"
+    },
+    "base_model_repo": {
+      "type": "string"
+    },
+    "quantization": {
+      "type": "string"
+    },
+    "file_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "file_size_bytes": {
+      "type": "integer"
+    },
+    "license": {
+      "type": "string"
+    },
+    "runtime": {
+      "type": "string"
+    },
+    "converter_version": {
+      "type": ["string", "null"]
+    },
+    "tokenizer": {
+      "type": ["string", "null"]
+    },
+    "chat_template": {
+      "type": ["string", "null"]
+    },
+    "context_length": {
+      "type": ["integer", "null"]
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "eval_report_path": {
+      "type": ["string", "null"]
+    }
+  },
+  "additionalProperties": false
+}

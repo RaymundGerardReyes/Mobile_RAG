@@ -1,28 +1,51 @@
-# Angular specific
-/dist/
-/out-tsc/
-/tmp/
-/coverage/
-/e2e/test-output/
-/.angular/
-.angular/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
 
-# Node modules and dependency files
-/node_modules/
-/package-lock.json
-/yarn.lock
+# Training pipeline data (copyrighted/large/generated)
+artifacts/
+training/data/
+training/artifacts/
+training/models/
 
-# Environment files
-/.env
+# Mobile
+mobile/node_modules/
+mobile/.expo/
+mobile/ios/
+mobile/android/
+mobile/dist/
 
-# Angular CLI and build artefacts
-/.angular-cli.json
-/.ng/
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
 
-# TypeScript cache
-*.tsbuildinfo
+# OS
+Thumbs.db
+.DS_Store
 
-# Logs
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# Release artifacts
+release/builds/
+release/*.zip
+*.gguf
+mobile/assets/*.db
+mobile/assets/*manifest*.json
+*.sqlite
+*.sqlite3
+
+# Temporary / scratch scripts
+scripts/temp_*.ps1
+scripts/test_*.ps1
+temp_*
+*.scratch.*
+scratch/
+temp/

@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "linked-question",
+  "type": "object",
+  "required": [
+    "question_id",
+    "topic",
+    "question_type",
+    "stem",
+    "source_page"
+  ],
+  "properties": {
+    "question_id": {
+      "type": "string",
+      "pattern": "^q[0-9]{4,}$"
+    },
+    "topic": {
+      "type": "string"
+    },
+    "question_type": {
+      "type": "string",
+      "enum": [
+        "multiple_choice",
+        "identification",
+        "essay"
+      ]
+    },
+    "stem": {
+      "type": "string",
+      "minLength": 1
+    },
+    "choices": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "object",
+        "required": [
+          "key",
+          "text"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "canonical_answer": {
+      "type": ["string", "null"]
+    },
+    "canonical_choice_key": {
+      "type": ["string", "null"]
+    },
+    "canonical_explanation": {
+      "type": ["string", "null"]
+    },
+    "source_page": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "answer_key_page": {
+      "type": ["integer", "null"]
+    },
+    "difficulty": {
+      "type": ["string", "null"],
+      "enum": [
+        null,
+        "easy",
+        "medium",
+        "hard"
+      ]
+    },
+    "link_confidence": {
+      "type": "string",
+      "enum": [
+        "verified",
+        "high",
+        "low",
+        "unresolved"
+      ]
+    },
+    "link_warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "content_version": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

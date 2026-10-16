@@ -1,0 +1,207 @@
+export type FreeAnswerVerdictType =
+  | 'equivalent'
+  | 'partially_equivalent'
+  | 'incorrect'
+  | 'ambiguous';
+
+export interface FreeAnswerVerdict {
+  verdict: FreeAnswerVerdictType;
+  matched_concepts: string[];
+  missing_concepts: string[];
+  evidence_passage_ids: string[];
+  confidence: number;
+}
+
+export interface ValidatedVerdictResult {
+  verdict: FreeAnswerVerdictType;
+  isCorrect: boolean;
+  score: number;
+  confidence: number;
+  matchedConcepts: string[];
+  missingConcepts: string[];
+  evidencePassageIds: string[];
+  guardrailTriggered?: 'MALFORMED_JSON' | 'HALLUCINATED_EVIDENCE' | 'LOW_CONFIDENCE' | null;
+  requiresManualReview: boolean;
+  rawText: string;
+}
+
+export class OutputValidator {
+  public static readonly MIN_CONFIDENCE_THRESHOLD = 0.75;
+
+  /**
+   * Validates raw LLM response against the 4 scoring guardrails.
+   */
+  public static validateFreeAnswer(
+    rawResponse: string,
+    allowedPassageIds: string[]
+  ): ValidatedVerdictResult {
+    // 1. Guardrail 1: JSON Parsing & Schema Validation
+    const parsed = this.parseJsonSafely(rawResponse);
+    if (!parsed || !this.isValidVerdictSchema(parsed)) {
+      return {
+        verdict: 'ambiguous',
+        isCorrect: false,
+        score: 0.0,
+        confidence: 0.0,
+        matchedConcepts: [],
+        missingConcepts: [],
+        evidencePassageIds: [],
+        guardrailTriggered: 'MALFORMED_JSON',
+        requiresManualReview: true,
+        rawText: rawResponse,
+      };
+    }
+
+    let verdict = parsed.verdict;
+    const confidence = parsed.confidence;
+    const matchedConcepts = parsed.matched_concepts;
+    const missingConcepts = parsed.missing_concepts;
+    let evidencePassageIds = parsed.evidence_passage_ids;
+
+    // 2. Guardrail 2: Hallucinated Evidence IDs
+    const allowedSet = new Set(allowedPassageIds);
+    const hasHallucinatedPassage = evidencePassageIds.some((id) => !allowedSet.has(id));
+    if (hasHallucinatedPassage) {
+      evidencePassageIds = evidencePassageIds.filter((id) => allowedSet.has(id));
+      return {
+        verdict: 'ambiguous',
+        isCorrect: false,
+        score: 0.0,
+        confidence: Math.min(confidence, 0.4),
+        matchedConcepts,
+        missingConcepts,
+        evidencePassageIds,
+        guardrailTriggered: 'HALLUCINATED_EVIDENCE',
+        requiresManualReview: true,
+        rawText: rawResponse,
+      };
+    }
+
+    // 3. Guardrail 3: Low Confidence Check (< 0.75)
+    if (confidence < this.MIN_CONFIDENCE_THRESHOLD) {
+      return {
+        verdict: 'ambiguous',
+        isCorrect: false,
+        score: 0.0,
+        confidence,
+        matchedConcepts,
+        missingConcepts,
+        evidencePassageIds,
+        guardrailTriggered: 'LOW_CONFIDENCE',
+        requiresManualReview: true,
+        rawText: rawResponse,
+      };
+    }
+
+    // 4. Guardrail 4: Verdict to Score Mapping
+    const { score, isCorrect, requiresManualReview } = this.mapVerdictToScore(verdict);
+
+    return {
+      verdict,
+      isCorrect,
+      score,
+      confidence,
+      matchedConcepts,
+      missingConcepts,
+      evidencePassageIds,
+      guardrailTriggered: null,
+      requiresManualReview,
+      rawText: rawResponse,
+    };
+  }
+
+  /**
+   * Deterministically maps verdict string to numeric score and correctness.
+   */
+  public static mapVerdictToScore(verdict: FreeAnswerVerdictType): {
+    score: number;
+    isCorrect: boolean;
+    requiresManualReview: boolean;
+  } {
+    switch (verdict) {
+      case 'equivalent':
+        return { score: 1.0, isCorrect: true, requiresManualReview: false };
+      case 'partially_equivalent':
+        return { score: 0.5, isCorrect: false, requiresManualReview: false };
+      case 'incorrect':
+        return { score: 0.0, isCorrect: false, requiresManualReview: false };
+      case 'ambiguous':
+      default:
+        return { score: 0.0, isCorrect: false, requiresManualReview: true };
+    }
+  }
+
+  private static parseJsonSafely(raw: string): any | null {
+    if (!raw || typeof raw !== 'string') return null;
+    let cleaned = raw.trim();
+
+    // Strip markdown code fences if present: ```json ... ``` or ``` ... ```
+    if (cleaned.startsWith('```')) {
+      const firstNewline = cleaned.indexOf('\n');
+      if (firstNewline !== -1) {
+        cleaned = cleaned.substring(firstNewline + 1);
+      }
+      const lastFence = cleaned.lastIndexOf('```');
+      if (lastFence !== -1) {
+        cleaned = cleaned.substring(0, lastFence);
+      }
+      cleaned = cleaned.trim();
+    }
+
+    // Try finding outer JSON object brackets if leading/trailing noise exists
+    const firstBrace = cleaned.indexOf('{');
+    const lastBrace = cleaned.lastIndexOf('}');
+    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+      cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+    }
+
+    try {
+      return JSON.parse(cleaned);
+    } catch {
+      // Recovery for trailing commas commonly generated by quantized models (e.g., {"a": 1,})
+      try {
+        const withoutTrailingCommas = cleaned.replace(/,\s*([}\]])/g, '$1');
+        return JSON.parse(withoutTrailingCommas);
+      } catch {
+        return null;
+      }
+    }
+  }
+
+  private static isValidVerdictSchema(obj: any): obj is FreeAnswerVerdict {
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return false;
+
+    // Strict contract conformance: additionalProperties: false
+    const allowedKeys = new Set([
+      'verdict',
+      'matched_concepts',
+      'missing_concepts',
+      'evidence_passage_ids',
+      'confidence',
+    ]);
+    for (const key of Object.keys(obj)) {
+      if (!allowedKeys.has(key)) return false;
+    }
+
+    const validVerdicts: Set<string> = new Set([
+      'equivalent',
+      'partially_equivalent',
+      'incorrect',
+      'ambiguous',
+    ]);
+
+    if (typeof obj.verdict !== 'string' || !validVerdicts.has(obj.verdict)) return false;
+    if (!Array.isArray(obj.matched_concepts)) return false;
+    if (!obj.matched_concepts.every((c: unknown) => typeof c === 'string')) return false;
+    if (!Array.isArray(obj.missing_concepts)) return false;
+    if (!obj.missing_concepts.every((c: unknown) => typeof c === 'string')) return false;
+    if (!Array.isArray(obj.evidence_passage_ids)) return false;
+    if (!obj.evidence_passage_ids.every((id: unknown) => typeof id === 'string')) return false;
+    if (typeof obj.confidence !== 'number' || isNaN(obj.confidence) || obj.confidence < 0 || obj.confidence > 1) {
+      return false;
+    }
+
+    return true;
+  }
+}
+

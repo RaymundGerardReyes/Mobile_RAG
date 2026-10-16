@@ -1,0 +1,60 @@
+# Pipeline configuration for Philippine Civil Service Exam Reviewer
+source:
+  pdf_path: "data/raw/reviewer.pdf"
+
+extract_textbook:
+  output_path: "artifacts/extracted_pages.jsonl"
+  manifest_path: "artifacts/extract_manifest.json"
+  chapter_heading_patterns:
+    - '^(?:CHAPTER|Chapter|KABANATA|Kabanata)\s+[\dIVXLCDM]+[.:]?\s*(.*)'
+    - '^(?:PART|Part|BAHAGI|Bahagi)\s+[\dIVXLCDM]+[.:]?\s*(.*)'
+    - '^(?:ENGLISH|MATH|FILIPINO|GENERAL\s+(?:INFORMATION|LAWS?)|CLERICAL\s+OPERATIONS)'
+    - '^(?:NUMERICAL\s+ABILITY|VERBAL\s+ABILITY|ANALYTICAL\s+ABILITY)'
+  section_heading_patterns:
+    - '^(?:Section|Seksyon)\s+[\dIVXLCDM]+[.:]?\s*(.*)'
+    - '^(?:Vocabulary|Grammar|Reading Comprehension|Analogy|Logic|Word Problems)'
+    - '^(?:Balarila|Talasalitaan|Pagbasa|Saligang Batas|R\.A\.\s*6713)'
+
+link_qa_pairs:
+  input_path: "artifacts/extracted_pages.jsonl"
+  output_path: "artifacts/linked_questions.jsonl"
+  manifest_path: "artifacts/link_manifest.json"
+  content_version: "2026.10.1"
+  question_patterns:
+    - '^\s*(\d{1,4})[.)]\s+(.*)'
+    - '^\s*Question\s+(\d{1,4})[.:]\s*(.*)'
+    - '^\s*Tanong\s+(\d{1,4})[.:]\s*(.*)'
+  choice_patterns:
+    - '^\s*([A-Da-d])[.)]\s+(.*)'
+    - '^\s*\[([A-Da-d])\]\s*(.*)'
+  answer_key_header_patterns:
+    - '(?i)(?:answer\s+key|susi\s+sa\s+pagwawasto|mga\s+tamang\s+sagot|correct\s+answers)'
+  answer_key_item_patterns:
+    - '(\d{1,4})\s*[-–—:]\s*([A-Da-d])\b'
+    - '(\d{1,4})[.)]\s*([A-Da-d])\b'
+    - '(\d{1,4})\s+([A-Da-d])\b'
+
+build_passages:
+  input_path: "artifacts/extracted_pages.jsonl"
+  output_path: "artifacts/passages.jsonl"
+  manifest_path: "artifacts/passages_manifest.json"
+  max_passage_words: 300
+  overlap_words: 50
+
+build_embeddings:
+  enabled: false
+  input_path: "artifacts/passages.jsonl"
+  output_path: "artifacts/passage_embeddings.npz"
+
+train:
+  enabled: false
+
+export_gguf:
+  enabled: false
+
+content_pack:
+  input_questions_path: "artifacts/linked_questions.jsonl"
+  input_passages_path: "artifacts/passages.jsonl"
+  output_path: "artifacts/content_pack.db"
+  manifest_path: "artifacts/content_pack_manifest.json"
+  version: "2026.10.1"

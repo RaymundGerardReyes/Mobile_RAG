@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "passage",
+  "type": "object",
+  "required": [
+    "passage_id",
+    "chapter",
+    "start_page",
+    "end_page",
+    "text",
+    "content_hash"
+  ],
+  "properties": {
+    "passage_id": {
+      "type": "string",
+      "pattern": "^p[0-9]{4,}$"
+    },
+    "chapter": {
+      "type": "string"
+    },
+    "section": {
+      "type": ["string", "null"]
+    },
+    "start_page": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "end_page": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "word_count": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false
+}

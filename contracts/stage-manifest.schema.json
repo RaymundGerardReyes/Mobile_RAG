@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stage-manifest",
+  "type": "object",
+  "required": [
+    "run_id",
+    "stage",
+    "started_at",
+    "ended_at",
+    "status",
+    "input_hashes",
+    "output_hashes"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string"
+    },
+    "stage": {
+      "type": "string"
+    },
+    "started_at": {
+      "type": "string"
+    },
+    "ended_at": {
+      "type": "string"
+    },
+    "duration_ms": {
+      "type": "integer"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "success",
+        "failed",
+        "partial"
+      ]
+    },
+    "input_hashes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "output_hashes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "config_hash": {
+      "type": ["string", "null"]
+    },
+    "git_revision": {
+      "type": ["string", "null"]
+    },
+    "python_version": {
+      "type": "string"
+    },
+    "package_versions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "gpu_name": {
+      "type": ["string", "null"]
+    },
+    "record_count": {
+      "type": ["integer", "null"]
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "error_code": {
+      "type": ["string", "null"]
+    },
+    "error_summary": {
+      "type": ["string", "null"]
+    }
+  },
+  "additionalProperties": false
+}

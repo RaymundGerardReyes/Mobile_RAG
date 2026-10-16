@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "free-answer-verdict",
+  "type": "object",
+  "required": [
+    "verdict",
+    "matched_concepts",
+    "missing_concepts",
+    "evidence_passage_ids",
+    "confidence"
+  ],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "equivalent",
+        "partially_equivalent",
+        "incorrect",
+        "ambiguous"
+      ]
+    },
+    "matched_concepts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "missing_concepts": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "evidence_passage_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    }
+  },
+  "additionalProperties": false
+}
