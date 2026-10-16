@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   ScrollView,
   StyleSheet,
   Text,
@@ -42,6 +43,7 @@ export interface QuizReviewScreenProps {
   supportingPassages: RetrievedPassage[];
   sourcePages: number[];
   aiExplanation: string | ExplainMoreResponse | null;
+  streamingAiText?: string;
   freeAnswerEvaluation?: ValidatedVerdictResult | null;
   modelStatus: ModelRuntimeStatus;
   isGeneratingAi: boolean;
@@ -73,6 +75,7 @@ export function QuizReviewScreen({
   supportingPassages,
   sourcePages,
   aiExplanation,
+  streamingAiText,
   freeAnswerEvaluation,
   modelStatus,
   isGeneratingAi,
@@ -90,8 +93,8 @@ export function QuizReviewScreen({
 }: QuizReviewScreenProps) {
   const [isInputFocused, setIsInputFocused] = useState(false);
 
-  // If session is complete or question is null, render completion summary card
-  if (isSessionCompleted || !question) {
+  // 1. Session Completed State
+  if (isSessionCompleted) {
     return (
       <ScrollView
         style={styles.screen}
@@ -138,6 +141,16 @@ export function QuizReviewScreen({
     );
   }
 
+  // 2. Uninitialized / Loading State (question is null before session starts)
+  if (!question) {
+    return (
+      <View style={[styles.screen, styles.centerContainer]}>
+        <ActivityIndicator size="large" color={colors.brand.primary} />
+        <Text style={styles.loadingText}>Loading review session...</Text>
+      </View>
+    );
+  }
+
   const isAnswered = submissionResult !== null;
   const canSubmit =
     question.questionType === 'multiple_choice'
@@ -149,9 +162,10 @@ export function QuizReviewScreen({
     modelStatus.state === 'loading' || modelStatus.state === 'verifying';
 
   const explanationText =
-    typeof aiExplanation === 'string'
+    (typeof aiExplanation === 'string'
       ? aiExplanation
-      : aiExplanation?.explanation || null;
+      : aiExplanation?.explanation || null) ||
+    (isGeneratingAi && streamingAiText ? streamingAiText : null);
 
   return (
     <ScrollView
@@ -225,10 +239,17 @@ export function QuizReviewScreen({
               onChangeText={onChangeFreeText}
               onFocus={() => setIsInputFocused(true)}
               onBlur={() => setIsInputFocused(false)}
-              placeholder="Type your answer here..."
+              placeholder={
+                question.questionType === 'essay'
+                  ? 'Type your comprehensive explanation here...'
+                  : 'Type your answer here...'
+              }
               placeholderTextColor={colors.neutral.textMuted}
+              multiline
+              textAlignVertical="top"
               style={[
                 styles.textInput,
+                question.questionType === 'essay' && styles.textInputMultiline,
                 isInputFocused && !isAnswered && styles.textInputFocused,
                 isAnswered && styles.textInputDisabled,
               ]}
@@ -389,6 +410,14 @@ export function QuizReviewScreen({
                       </Text>
                     </View>
                   )}
+
+                  {freeAnswerEvaluation.requiresManualReview && (
+                    <View style={styles.manualReviewNotice}>
+                      <Text style={styles.manualReviewText}>
+                        Manual Review Recommended
+                      </Text>
+                    </View>
+                  )}
                 </View>
               ) : onRequestInterpretFreeAnswer ? (
                 <View style={styles.rubricActionContainer}>
@@ -498,6 +527,7 @@ export function ConnectedQuizReviewScreen({
       supportingPassages={state.supportingPassages}
       sourcePages={state.sourcePages}
       aiExplanation={state.aiExplanation}
+      streamingAiText={state.streamingAiText}
       freeAnswerEvaluation={state.freeAnswerEvaluation}
       modelStatus={modelStatus}
       isGeneratingAi={state.isGeneratingAi}
@@ -530,6 +560,18 @@ const styles = StyleSheet.create({
     padding: spacing.base,
     paddingBottom: spacing.section,
     gap: spacing.base,
+  },
+  centerContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.xxl,
+    gap: spacing.base,
+  },
+  loadingText: {
+    fontSize: typography.body.fontSize,
+    color: colors.neutral.textSecondary,
+    fontWeight: '500',
   },
   metaRow: {
     flexDirection: 'row',
@@ -574,6 +616,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.neutral.surfaceElevated,
     fontSize: typography.body.fontSize,
     color: colors.neutral.textPrimary,
+  },
+  textInputMultiline: {
+    minHeight: 110,
+    paddingTop: spacing.md,
   },
   textInputFocused: {
     borderColor: colors.brand.primary,
@@ -696,6 +742,19 @@ const styles = StyleSheet.create({
   guardrailText: {
     fontSize: typography.caption.fontSize,
     color: colors.semantic.warning.text,
+    fontWeight: '600',
+  },
+  manualReviewNotice: {
+    marginTop: spacing.xs,
+    padding: spacing.xs,
+    borderRadius: radius.sm,
+    backgroundColor: colors.brand.tint,
+    borderWidth: borders.hairline,
+    borderColor: colors.brand.border,
+  },
+  manualReviewText: {
+    fontSize: typography.caption.fontSize,
+    color: colors.brand.primary,
     fontWeight: '600',
   },
   rubricActionContainer: {

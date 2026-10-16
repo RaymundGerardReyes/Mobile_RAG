@@ -4,7 +4,6 @@ import {
   ActivityIndicator,
   Animated,
   Easing,
-  LayoutChangeEvent,
   Pressable,
   StyleProp,
   StyleSheet,
@@ -79,6 +78,13 @@ export function CSCButton({
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const opacityAnim = useRef(new Animated.Value(motion.opacity.resting)).current;
 
+  useEffect(() => {
+    if (disabled || loading) {
+      scaleAnim.setValue(motion.scale.standard);
+      opacityAnim.setValue(motion.opacity.resting);
+    }
+  }, [disabled, loading]);
+
   const handlePressIn = () => {
     if (disabled || loading) return;
 
@@ -108,8 +114,6 @@ export function CSCButton({
   };
 
   const handlePressOut = () => {
-    if (disabled || loading) return;
-
     if (reducedMotion) {
       Animated.timing(opacityAnim, {
         toValue: motion.opacity.resting,
@@ -372,6 +376,13 @@ export function AnimatedChoiceRow({
     return () => clearTimeout(timer);
   }, [reducedMotion, index]);
 
+  useEffect(() => {
+    if (disabled) {
+      scaleAnim.setValue(motion.scale.standard);
+      opacityAnim.setValue(motion.opacity.resting);
+    }
+  }, [disabled]);
+
   const handlePressIn = () => {
     if (disabled) return;
 
@@ -401,8 +412,6 @@ export function AnimatedChoiceRow({
   };
 
   const handlePressOut = () => {
-    if (disabled) return;
-
     if (reducedMotion) {
       Animated.timing(opacityAnim, {
         toValue: motion.opacity.resting,
@@ -441,7 +450,6 @@ export function AnimatedChoiceRow({
       style={[
         {
           transform: [
-            { scale: scaleAnim },
             {
               translateY: entranceAnim.interpolate({
                 inputRange: [0, 1],
@@ -449,52 +457,59 @@ export function AnimatedChoiceRow({
               }),
             },
           ],
-          opacity: Animated.multiply(opacityAnim, entranceAnim),
+          opacity: entranceAnim,
         },
         style,
       ]}
     >
-      <Pressable
-        accessibilityRole="radio"
-        accessibilityLabel={accessibilityLabel || `${choiceKey}: ${text} ${choiceStateLabel}`}
-        accessibilityState={{
-          checked: selected,
-          disabled,
+      <Animated.View
+        style={{
+          transform: [{ scale: scaleAnim }],
+          opacity: opacityAnim,
         }}
-        disabled={disabled}
-        onPress={onPress}
-        onPressIn={handlePressIn}
-        onPressOut={handlePressOut}
-        style={[
-          styles.choiceRowBase,
-          selected && styles.choiceRowSelected,
-          isCorrect && styles.choiceRowCorrect,
-          isIncorrect && styles.choiceRowIncorrect,
-        ]}
       >
-        <View
+        <Pressable
+          accessibilityRole="radio"
+          accessibilityLabel={accessibilityLabel || `${choiceKey}: ${text} ${choiceStateLabel}`}
+          accessibilityState={{
+            checked: selected,
+            disabled,
+          }}
+          disabled={disabled}
+          onPress={onPress}
+          onPressIn={handlePressIn}
+          onPressOut={handlePressOut}
           style={[
-            styles.choiceKeyBadge,
-            selected && styles.choiceKeyBadgeSelected,
-            isCorrect && styles.choiceKeyBadgeCorrect,
-            isIncorrect && styles.choiceKeyBadgeIncorrect,
+            styles.choiceRowBase,
+            selected && styles.choiceRowSelected,
+            isCorrect && styles.choiceRowCorrect,
+            isIncorrect && styles.choiceRowIncorrect,
           ]}
         >
-          <Text
+          <View
             style={[
-              styles.choiceKeyText,
-              selected && styles.choiceKeyTextSelected,
-              isCorrect && styles.choiceKeyTextCorrect,
-              isIncorrect && styles.choiceKeyTextIncorrect,
+              styles.choiceKeyBadge,
+              selected && styles.choiceKeyBadgeSelected,
+              isCorrect && styles.choiceKeyBadgeCorrect,
+              isIncorrect && styles.choiceKeyBadgeIncorrect,
             ]}
           >
-            {choiceKey}
-          </Text>
-        </View>
-        <Text style={[styles.choiceText, textStyle]}>{text}</Text>
-        {isCorrect && <Text style={styles.choiceStatusIcon}>✓</Text>}
-        {isIncorrect && <Text style={[styles.choiceStatusIcon, styles.choiceStatusIconIncorrect]}>✕</Text>}
-      </Pressable>
+            <Text
+              style={[
+                styles.choiceKeyText,
+                selected && styles.choiceKeyTextSelected,
+                isCorrect && styles.choiceKeyTextCorrect,
+                isIncorrect && styles.choiceKeyTextIncorrect,
+              ]}
+            >
+              {choiceKey}
+            </Text>
+          </View>
+          <Text style={[styles.choiceText, textStyle]}>{text}</Text>
+          {isCorrect && <Text style={styles.choiceStatusIcon}>✓</Text>}
+          {isIncorrect && <Text style={[styles.choiceStatusIcon, styles.choiceStatusIconIncorrect]}>✕</Text>}
+        </Pressable>
+      </Animated.View>
     </Animated.View>
   );
 }
@@ -530,7 +545,6 @@ export function AnimatedProgressBar({
   accessibilityLabel,
 }: AnimatedProgressBarProps) {
   const reducedMotion = useReducedMotion();
-  const [trackWidth, setTrackWidth] = useState<number>(300);
 
   const ratio = Math.max(
     0,
@@ -558,18 +572,10 @@ export function AnimatedProgressBar({
     }).start();
   }, [ratio, reducedMotion]);
 
-  const handleLayout = (e: LayoutChangeEvent) => {
-    const w = e.nativeEvent.layout.width;
-    if (w > 0 && w !== trackWidth) {
-      setTrackWidth(w);
-    }
-  };
-
   const percentage = Math.round(ratio * 100);
 
   return (
     <View
-      onLayout={handleLayout}
       accessibilityRole="progressbar"
       accessibilityLabel={accessibilityLabel || `Progress ${percentage}%`}
       accessibilityValue={{ min: 0, max: 100, now: percentage }}
@@ -588,14 +594,7 @@ export function AnimatedProgressBar({
           {
             height,
             backgroundColor: barColor,
-            transform: [
-              {
-                translateX: animValue.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [-trackWidth, 0],
-                }),
-              },
-            ],
+            transform: [{ scaleX: animValue }],
           },
         ]}
       />
@@ -812,5 +811,6 @@ const styles = StyleSheet.create({
   progressFill: {
     width: '100%',
     borderRadius: radius.pill,
+    transformOrigin: 'left',
   },
 });

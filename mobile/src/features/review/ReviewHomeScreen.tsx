@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -201,50 +202,57 @@ export function ReviewHomeScreen({
       <View style={styles.topicsSection}>
         <Text style={styles.topicsSectionTitle}>Topics & Subject Areas</Text>
 
-        {topicSummaries.map((summary, idx) => {
-          const topicAccuracy =
-            summary.answeredCount > 0
-              ? Math.round((summary.correctCount / summary.answeredCount) * 100)
-              : null;
+        {isLoading && topicSummaries.length === 0 ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="small" color={colors.brand.primary} />
+            <Text style={styles.loadingText}>Loading study topics...</Text>
+          </View>
+        ) : (
+          topicSummaries.map((summary, idx) => {
+            const topicAccuracy =
+              summary.answeredCount > 0
+                ? Math.round((summary.correctCount / summary.answeredCount) * 100)
+                : null;
 
-          return (
-            <ContentCard
-              key={summary.topic.id}
-              delayMs={idx * 40}
-              style={styles.topicCard}
-            >
-              <View style={styles.topicHeader}>
-                <Text style={styles.topicTitle}>{summary.topic.title}</Text>
-                {topicAccuracy !== null && (
-                  <CSCChipBadge
-                    label={`${topicAccuracy}%`}
-                    variant={topicAccuracy >= 75 ? 'success' : 'warning'}
-                  />
-                )}
-              </View>
-
-              <View style={styles.topicProgressContainer}>
-                <View style={styles.topicProgressMeta}>
-                  <Text style={styles.topicProgressText}>
-                    {summary.answeredCount} of {summary.totalQuestions} answered
-                  </Text>
+            return (
+              <ContentCard
+                key={summary.topic.id}
+                delayMs={idx * 40}
+                style={styles.topicCard}
+              >
+                <View style={styles.topicHeader}>
+                  <Text style={styles.topicTitle}>{summary.topic.title}</Text>
+                  {topicAccuracy !== null && (
+                    <CSCChipBadge
+                      label={`${topicAccuracy}%`}
+                      variant={topicAccuracy >= 75 ? 'success' : 'warning'}
+                    />
+                  )}
                 </View>
-                <AnimatedProgressBar
-                  current={summary.answeredCount}
-                  total={summary.totalQuestions || 1}
-                  height={6}
-                />
-              </View>
 
-              <CSCButton
-                title="Practice Topic"
-                variant="secondary"
-                onPress={() => onStartSession(summary.topic.id, selectedMode)}
-                style={styles.topicPracticeButton}
-              />
-            </ContentCard>
-          );
-        })}
+                <View style={styles.topicProgressContainer}>
+                  <View style={styles.topicProgressMeta}>
+                    <Text style={styles.topicProgressText}>
+                      {summary.answeredCount} of {summary.totalQuestions} answered
+                    </Text>
+                  </View>
+                  <AnimatedProgressBar
+                    current={summary.answeredCount}
+                    total={summary.totalQuestions || 1}
+                    height={6}
+                  />
+                </View>
+
+                <CSCButton
+                  title="Practice Topic"
+                  variant="secondary"
+                  onPress={() => onStartSession(summary.topic.id, selectedMode)}
+                  style={styles.topicPracticeButton}
+                />
+              </ContentCard>
+            );
+          })
+        )}
       </View>
     </ScrollView>
   );
@@ -272,7 +280,7 @@ export function ConnectedReviewHomeScreen({
   });
   const [isLoading, setIsLoading] = useState(true);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
       const summaries = await repository.getTopicSummaries();
@@ -287,11 +295,11 @@ export function ConnectedReviewHomeScreen({
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [repository, llmPort]);
 
   useEffect(() => {
     loadData();
-  }, [repository, llmPort]);
+  }, [loadData]);
 
   return (
     <ReviewHomeScreen
@@ -459,5 +467,15 @@ const styles = StyleSheet.create({
   },
   topicPracticeButton: {
     marginTop: spacing.xs,
+  },
+  loadingContainer: {
+    padding: spacing.xl,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+  },
+  loadingText: {
+    fontSize: typography.subheadline.fontSize,
+    color: colors.neutral.textSecondary,
   },
 });
