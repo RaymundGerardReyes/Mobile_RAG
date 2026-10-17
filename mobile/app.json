@@ -2,9 +2,11 @@
   "expo": {
     "name": "CSC AI Tutor",
     "slug": "ai-tutor-mobile",
+    "scheme": "csc-ai-tutor",
     "version": "0.3.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
+    "newArchEnabled": true,
     "splash": {
       "resizeMode": "contain",
       "backgroundColor": "#2A338F"
@@ -22,4 +24,3 @@
     "plugins": []
   }
 }
-
