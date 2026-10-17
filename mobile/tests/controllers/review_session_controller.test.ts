@@ -22,7 +22,7 @@ import { CancelGeneration } from '../../src/application/use_cases/cancel_generat
 import {
   ReviewSessionController,
   ReviewSessionState,
-} from '../../src/app/review_session_controller.js';
+} from '../../src/controllers/review_session_controller.js';
 
 describe('ReviewSessionController & SQLite Migration Safeguard', () => {
   let db: NodeSqliteDatabase;

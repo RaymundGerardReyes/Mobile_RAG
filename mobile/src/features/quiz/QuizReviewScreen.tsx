@@ -31,7 +31,7 @@ import { ValidatedVerdictResult } from '../../ai/evaluation/output_validator.js'
 import {
   ReviewSessionController,
   ReviewSessionState,
-} from '../../app/review_session_controller.js';
+} from '../../controllers/review_session_controller.js';
 
 export interface QuizReviewScreenProps {
   question: Question | null;
