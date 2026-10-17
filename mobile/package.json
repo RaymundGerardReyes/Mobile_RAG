@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "start": "expo start",
+    "expo": "expo",
+    "ios": "expo start --ios",
+    "android": "expo start --android",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "node --test dist/tests/**/*.test.js"
