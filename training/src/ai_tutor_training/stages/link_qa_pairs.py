@@ -7,6 +7,7 @@ import datetime
 import json
 import re
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -456,11 +457,23 @@ def link_qa_pairs(
             msg = f"Orphan answer key: Chapter '{c_name}' Item {q_num}={k_val} on page {k_page} has no question"
             warnings.append(msg)
 
-    # Write output JSONL
+    # Write output JSONL atomically
     out_file.parent.mkdir(parents=True, exist_ok=True)
-    with out_file.open("w", encoding="utf-8") as f:
-        for rec in linked_records:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    temp_out = out_file.parent / f"{out_file.name}.tmp.{uuid.uuid4().hex}"
+    try:
+        with temp_out.open("w", encoding="utf-8") as f:
+            for rec in linked_records:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        if out_file.exists():
+            out_file.unlink()
+        temp_out.rename(out_file)
+    except Exception:
+        if temp_out.exists():
+            try:
+                temp_out.unlink()
+            except Exception:
+                pass
+        raise
 
     ended_at = datetime.datetime.now(datetime.timezone.utc)
 

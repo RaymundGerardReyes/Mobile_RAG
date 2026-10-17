@@ -27,6 +27,8 @@ def load_yaml_config(config_path: Path | str) -> dict[str, Any]:
     """Load configuration from a YAML file."""
     p = Path(config_path)
     if not p.exists():
+        if click is not None:
+            raise click.ClickException(f"Configuration file not found: {p}")
         raise FileNotFoundError(f"Configuration file not found: {p}")
     if yaml is None:
         raise ImportError("pyyaml is required to parse YAML configurations. Install via: pip install pyyaml")
@@ -45,36 +47,39 @@ if click is not None:
     @click.option("--config", "-c", default="configs/pipeline.yaml", help="Path to pipeline YAML config.")
     @click.option("--pdf", help="Override source PDF path.")
     @click.option("--output", help="Override output JSONL path.")
-    def cmd_extract(config: str, pdf: str | None, output: str | None) -> None:
+    @click.option("--manifest", help="Override output manifest JSON path.")
+    def cmd_extract(config: str, pdf: str | None, output: str | None, manifest: str | None) -> None:
         """Extract raw pages from textbook PDF."""
         cfg = load_yaml_config(config)
         pdf_path = pdf or cfg.get("source", {}).get("pdf_path", "data/raw/reviewer.pdf")
         click.echo(f"Running extract_textbook on {pdf_path}...")
-        pages = extract_textbook(pdf_path, config=cfg, output_path=output)
+        pages = extract_textbook(pdf_path, config=cfg, output_path=output, manifest_path=manifest)
         click.echo(f"Successfully extracted {len(pages)} pages.")
 
     @cli.command("link")
     @click.option("--config", "-c", default="configs/pipeline.yaml", help="Path to pipeline YAML config.")
     @click.option("--input", help="Override input extracted_pages.jsonl path.")
     @click.option("--output", help="Override output linked_questions.jsonl path.")
-    def cmd_link(config: str, input: str | None, output: str | None) -> None:
+    @click.option("--manifest", help="Override output manifest JSON path.")
+    def cmd_link(config: str, input: str | None, output: str | None, manifest: str | None) -> None:
         """Link question stems, choices, and answer keys."""
         cfg = load_yaml_config(config)
         inp_path = input or cfg.get("link_qa_pairs", {}).get("input_path", "artifacts/extracted_pages.jsonl")
         click.echo(f"Running link_qa_pairs on {inp_path}...")
-        records = link_qa_pairs(inp_path, config=cfg, output_path=output)
+        records = link_qa_pairs(inp_path, config=cfg, output_path=output, manifest_path=manifest)
         click.echo(f"Successfully linked {len(records)} questions.")
 
     @cli.command("build-passages")
     @click.option("--config", "-c", default="configs/pipeline.yaml", help="Path to pipeline YAML config.")
     @click.option("--input", help="Override input extracted_pages.jsonl path.")
     @click.option("--output", help="Override output passages.jsonl path.")
-    def cmd_build_passages(config: str, input: str | None, output: str | None) -> None:
+    @click.option("--manifest", help="Override output manifest JSON path.")
+    def cmd_build_passages(config: str, input: str | None, output: str | None, manifest: str | None) -> None:
         """Chunk extracted text into bounded, sentence-aware passages."""
         cfg = load_yaml_config(config)
         inp_path = input or cfg.get("build_passages", {}).get("input_path", "artifacts/extracted_pages.jsonl")
         click.echo(f"Running build_passages on {inp_path}...")
-        passages = build_passages(inp_path, config=cfg, output_path=output)
+        passages = build_passages(inp_path, config=cfg, output_path=output, manifest_path=manifest)
         click.echo(f"Successfully built {len(passages)} passages.")
 
     @cli.command("build-content-pack")
@@ -82,11 +87,15 @@ if click is not None:
     @click.option("--questions", help="Override linked_questions.jsonl path.")
     @click.option("--passages", help="Override passages.jsonl path.")
     @click.option("--output", help="Override output content_pack.db path.")
+    @click.option("--version", "version", help="Override content pack semantic version.")
+    @click.option("--manifest", help="Override output manifest JSON path.")
     def cmd_build_content_pack(
         config: str,
         questions: str | None,
         passages: str | None,
         output: str | None,
+        version: str | None,
+        manifest: str | None,
     ) -> None:
         """Build SQLite content pack with FTS5 lexical search."""
         cfg = load_yaml_config(config)
@@ -94,15 +103,16 @@ if click is not None:
         q_path = questions or cp_cfg.get("input_questions_path", "artifacts/linked_questions.jsonl")
         p_path = passages or cp_cfg.get("input_passages_path", "artifacts/passages.jsonl")
         out_path = output or cp_cfg.get("output_path", "artifacts/content_pack.db")
-        version = cp_cfg.get("version", "2026.10.1")
+        ver = version or cp_cfg.get("version", "2026.10.1")
 
         click.echo(f"Building content pack {out_path} from {q_path} and {p_path}...")
         db_file = build_content_pack(
             linked_questions_path=q_path,
             passages_path=p_path,
             output_db_path=out_path,
-            version=version,
+            version=ver,
             config=cfg,
+            manifest_path=manifest,
         )
         click.echo(f"Successfully built content pack: {db_file}")
 
@@ -132,14 +142,19 @@ if click is not None:
         cp_out = cfg.get("content_pack", {}).get("output_path", "artifacts/content_pack.db")
         version = cfg.get("content_pack", {}).get("version", "2026.10.1")
 
+        extract_manifest = cfg.get("extract_textbook", {}).get("manifest_path")
+        link_manifest = cfg.get("link_qa_pairs", {}).get("manifest_path")
+        passages_manifest = cfg.get("build_passages", {}).get("manifest_path")
+        cp_manifest = cfg.get("content_pack", {}).get("manifest_path")
+
         click.echo("=== Step 1/4: Extracting Textbook ===")
-        extract_textbook(pdf_path, config=cfg, output_path=pages_out)
+        extract_textbook(pdf_path, config=cfg, output_path=pages_out, manifest_path=extract_manifest)
 
         click.echo("=== Step 2/4: Linking QA Pairs ===")
-        link_qa_pairs(pages_out, config=cfg, output_path=questions_out)
+        link_qa_pairs(pages_out, config=cfg, output_path=questions_out, manifest_path=link_manifest)
 
         click.echo("=== Step 3/4: Building Passages ===")
-        build_passages(pages_out, config=cfg, output_path=passages_out)
+        build_passages(pages_out, config=cfg, output_path=passages_out, manifest_path=passages_manifest)
 
         click.echo("=== Step 4/4: Building Content Pack ===")
         build_content_pack(
@@ -148,6 +163,7 @@ if click is not None:
             output_db_path=cp_out,
             version=version,
             config=cfg,
+            manifest_path=cp_manifest,
         )
         click.echo("Pipeline completed successfully!")
 

@@ -8,6 +8,7 @@ import hashlib
 import json
 import re
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -87,7 +88,13 @@ def extract_textbook(
     )
 
     out_file = Path(output_path or stage_cfg.get("output_path", "artifacts/extracted_pages.jsonl"))
-    man_file = Path(manifest_path or stage_cfg.get("manifest_path", "artifacts/extract_manifest.json"))
+    if manifest_path:
+        man_file = Path(manifest_path)
+    elif output_path:
+        cfg_name = Path(stage_cfg.get("manifest_path", "artifacts/extract_manifest.json")).name
+        man_file = out_file.parent / cfg_name
+    else:
+        man_file = Path(stage_cfg.get("manifest_path", "artifacts/extract_manifest.json"))
 
     try:
         import fitz  # PyMuPDF
@@ -97,49 +104,62 @@ def extract_textbook(
         )
 
     doc = fitz.open(str(pdf_p))
-    source_id = compute_sha256(pdf_p)
+    try:
+        source_id = compute_sha256(pdf_p)
 
-    extracted_pages: list[dict[str, Any]] = []
-    current_chapter: str | None = None
-    current_section: str | None = None
-    warnings: list[str] = []
+        extracted_pages: list[dict[str, Any]] = []
+        current_chapter: str | None = None
+        current_section: str | None = None
+        warnings: list[str] = []
 
-    for page_idx in range(len(doc)):
-        page_num = page_idx + 1
-        page = doc[page_idx]
-        raw_text = page.get_text("text") or ""
-        clean_text = raw_text.strip()
+        for page_idx in range(len(doc)):
+            page_num = page_idx + 1
+            page = doc[page_idx]
+            raw_text = page.get_text("text") or ""
+            clean_text = raw_text.strip()
 
-        is_empty = len(clean_text) == 0
-        empty_reason = "No text content detected" if is_empty else None
+            is_empty = len(clean_text) == 0
+            empty_reason = "No text content detected" if is_empty else None
 
-        new_chap, new_sec, headings = extract_page_headings(
-            clean_text, chapter_patterns, section_heading_patterns
-        )
-        if new_chap:
-            current_chapter = new_chap
-        if new_sec:
-            current_section = new_sec
+            new_chap, new_sec, headings = extract_page_headings(
+                clean_text, chapter_patterns, section_heading_patterns
+            )
+            if new_chap:
+                current_chapter = new_chap
+            if new_sec:
+                current_section = new_sec
 
-        record: dict[str, Any] = {
-            "source_id": source_id,
-            "page_number": page_num,
-            "chapter": current_chapter,
-            "section": current_section,
-            "text": clean_text,
-            "is_empty": is_empty,
-            "empty_reason": empty_reason,
-            "headings_detected": headings,
-        }
-        extracted_pages.append(record)
+            record: dict[str, Any] = {
+                "source_id": source_id,
+                "page_number": page_num,
+                "chapter": current_chapter,
+                "section": current_section,
+                "text": clean_text,
+                "is_empty": is_empty,
+                "empty_reason": empty_reason,
+                "headings_detected": headings,
+            }
+            extracted_pages.append(record)
+    finally:
+        doc.close()
 
-    doc.close()
-
-    # Save output JSONL
+    # Save output JSONL atomically
     out_file.parent.mkdir(parents=True, exist_ok=True)
-    with out_file.open("w", encoding="utf-8") as f:
-        for rec in extracted_pages:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    temp_out = out_file.parent / f"{out_file.name}.tmp.{uuid.uuid4().hex}"
+    try:
+        with temp_out.open("w", encoding="utf-8") as f:
+            for rec in extracted_pages:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        if out_file.exists():
+            out_file.unlink()
+        temp_out.rename(out_file)
+    except Exception:
+        if temp_out.exists():
+            try:
+                temp_out.unlink()
+            except Exception:
+                pass
+        raise
 
     ended_at = datetime.datetime.now(datetime.timezone.utc)
 

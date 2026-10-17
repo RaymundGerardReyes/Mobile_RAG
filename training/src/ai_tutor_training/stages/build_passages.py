@@ -8,6 +8,7 @@ import hashlib
 import json
 import re
 import sys
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -244,11 +245,23 @@ def build_passages(
                 step = 1
             idx += step
 
-    # Write output JSONL
+    # Write output JSONL atomically
     out_file.parent.mkdir(parents=True, exist_ok=True)
-    with out_file.open("w", encoding="utf-8") as f:
-        for p in passages:
-            f.write(json.dumps(p, ensure_ascii=False) + "\n")
+    temp_out = out_file.parent / f"{out_file.name}.tmp.{uuid.uuid4().hex}"
+    try:
+        with temp_out.open("w", encoding="utf-8") as f:
+            for p in passages:
+                f.write(json.dumps(p, ensure_ascii=False) + "\n")
+        if out_file.exists():
+            out_file.unlink()
+        temp_out.rename(out_file)
+    except Exception:
+        if temp_out.exists():
+            try:
+                temp_out.unlink()
+            except Exception:
+                pass
+        raise
 
     ended_at = datetime.datetime.now(datetime.timezone.utc)
 

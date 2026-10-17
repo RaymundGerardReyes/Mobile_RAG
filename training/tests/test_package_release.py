@@ -48,27 +48,29 @@ def artifacts_dir(tmp_path: Path) -> Path:
     shutil.copy(fixtures_dir / "sample_linked_questions.jsonl", synth_dir / "linked_questions.jsonl")
     shutil.copy(fixtures_dir / "sample_passages.jsonl", synth_dir / "passages.jsonl")
 
-    import hashlib
-    for fname, st_name in [
-        ("extracted_pages.jsonl", "extract_manifest.json"),
-        ("linked_questions.jsonl", "qa_manifest.json"),
-        ("passages.jsonl", "passages_manifest.json"),
-    ]:
-        data = (synth_dir / fname).read_bytes()
-        sha = hashlib.sha256(data).hexdigest()
-        manifest_payload = {
-            "stage": st_name.replace("_manifest.json", ""),
-            "timestamp": "2026-10-16T00:00:00Z",
-            "output_files": [fname],
-            "checksums": {fname: f"sha256:{sha}"},
-            "parameters": {},
-            "metrics": {"record_count": 6},
-        }
-        (synth_dir / st_name).write_text(json.dumps(manifest_payload), encoding="utf-8")
-
+    import datetime
     from ai_tutor_training.content_pack import build_content_pack
+    from ai_tutor_training.provenance import create_stage_manifest, save_stage_manifest
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    for fname, st_name, stage_id, cnt in [
+        ("extracted_pages.jsonl", "extract_manifest.json", "extract_textbook", 10),
+        ("linked_questions.jsonl", "link_manifest.json", "link_qa_pairs", 15),
+        ("passages.jsonl", "passages_manifest.json", "build_passages", 8),
+    ]:
+        mf = create_stage_manifest(
+            stage=stage_id,
+            started_at=now,
+            ended_at=now,
+            status="success",
+            input_files={},
+            output_files={fname: synth_dir / fname},
+            record_count=cnt,
+        )
+        save_stage_manifest(mf, synth_dir / st_name)
+
     build_content_pack(
-        questions_path=synth_dir / "linked_questions.jsonl",
+        linked_questions_path=synth_dir / "linked_questions.jsonl",
         passages_path=synth_dir / "passages.jsonl",
         output_db_path=synth_dir / "content_pack.db",
         version="2026.10.1",

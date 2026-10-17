@@ -168,6 +168,7 @@ def build_content_pack(
     # Atomic write pattern: build in a temporary file in same directory
     temp_db_path = out_p.parent / f"{out_p.name}.tmp.{uuid.uuid4().hex}"
 
+    conn = None
     try:
         conn = sqlite3.connect(str(temp_db_path))
         conn.execute("PRAGMA foreign_keys = ON;")
@@ -344,6 +345,7 @@ def build_content_pack(
 
         conn.commit()
         conn.close()
+        conn = None
 
         # Atomically publish to output path
         if out_p.exists():
@@ -351,8 +353,16 @@ def build_content_pack(
         temp_db_path.rename(out_p)
 
     except Exception:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
         if temp_db_path.exists():
-            temp_db_path.unlink()
+            try:
+                temp_db_path.unlink()
+            except Exception:
+                pass
         raise
 
     ended_at = datetime.datetime.now(datetime.timezone.utc)
