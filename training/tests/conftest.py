@@ -16,6 +16,21 @@ except ImportError:
     except ImportError:
         from training.tests.fixtures.generate_sample_pdf import generate_sample_pdf
 
+try:
+    from hypothesis import HealthCheck, settings
+    from hypothesis.database import DirectoryBasedExampleDatabase
+
+    settings.register_profile(
+        "offline",
+        database=DirectoryBasedExampleDatabase(Path(__file__).parent / ".hypothesis"),
+        max_examples=50,
+        deadline=None,
+        suppress_health_check=[HealthCheck.too_slow],
+    )
+    settings.load_profile("offline")
+except ImportError:
+    pass
+
 
 @pytest.fixture
 def repo_root() -> Path:
@@ -73,7 +88,7 @@ def pipeline_config() -> dict[str, Any]:
                 r"^(?:CHAPTER|Chapter|KABANATA|Kabanata)\s+[\dIVXLCDM]+[.:]?\s*(.*)",
             ],
             "section_heading_patterns": [
-                r"^(?:Section|Seksyon)\s+[\dIVXLCDM]+[.:]?\s*(.*)",
+                r"^(?:Section|Seksyon)(?:\s+[\dIVXLCDM]+)?[.:]?\s*(.*)",
             ],
         },
         "link_qa_pairs": {

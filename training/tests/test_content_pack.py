@@ -10,6 +10,8 @@ import pytest
 
 from ai_tutor_training.content_pack import build_content_pack
 
+pytestmark = pytest.mark.integration
+
 
 def test_build_content_pack(
     sample_linked_questions_path: Path,

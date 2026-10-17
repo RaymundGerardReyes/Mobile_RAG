@@ -16,6 +16,8 @@ from ai_tutor_training.stages.extract_textbook import extract_textbook
 from ai_tutor_training.stages.link_qa_pairs import link_qa_pairs
 from ai_tutor_training.stages.train import train
 
+pytestmark = pytest.mark.integration
+
 
 # ==============================================================================
 # Stage 1: Extraction Boundary & Failure Tests

@@ -14,6 +14,8 @@ from ai_tutor_training.stages.link_qa_pairs import (
     parse_answer_keys,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.integration]
+
 
 def test_classify_question_types() -> None:
     # Multiple choice

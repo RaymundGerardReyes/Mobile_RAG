@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import os
 import re
 import sys
 import uuid
@@ -15,6 +16,40 @@ from ai_tutor_training.provenance import (
     create_stage_manifest,
     save_stage_manifest,
 )
+
+
+def is_answer_key_item_line(line_str: str, item_patterns: list[str]) -> bool:
+    """Check if a line represents answer key content rather than a question stem.
+
+    Returns True for:
+      - '1 - A', '1 - C', '1: A', '1. A', '1 A'
+      - '1. A  2. B  3. C'
+      - '4 - Republic Act 6713', '4: RA 6713' (identification answers with non-period delimiter)
+    Returns False for:
+      - '1. Which branch of the Philippine government...' (real question stem)
+      - '1. A dog is a domestic animal...' (stem starting with A)
+    """
+    clean = line_str.strip()
+    if not clean:
+        return False
+
+    # 1. Matches single letter answer key item standalone: e.g. '1. A', '1 - A', '1: A', '1 A', '1. A.'
+    if re.match(r"^\s*\d{1,4}\s*[-–—.:]?\s*[A-Da-d]\s*[.)]?\s*$", clean):
+        return True
+
+    # 2. Matches multiple answer key items on the same line: e.g. '1. A  2. B  3. C' or '1 - A  2 - B'
+    for pat in item_patterns:
+        matches = re.findall(pat, clean)
+        if len(matches) >= 2:
+            return True
+        if len(matches) == 1 and not re.search(r"[a-zA-Z]{3,}", clean):
+            return True
+
+    # 3. Single-line identification answer key with non-period delimiter (e.g. '4 - Republic Act 6713')
+    if re.match(r"^\s*\d{1,4}\s*[-–—:]\s*(.+)$", clean):
+        return True
+
+    return False
 
 
 def parse_answer_keys(
@@ -32,6 +67,18 @@ def parse_answer_keys(
     """
     chapter_keys: dict[tuple[str | None, int], tuple[str, int]] = {}
     global_keys: list[tuple[int, str, int]] = []
+    in_answer_key = False
+
+    effective_q_patterns = q_patterns or [
+        r"^\s*(\d{1,4})[.)]\s+(.*)",
+        r"^\s*Question\s+(\d{1,4})[.:]\s*(.*)",
+        r"^\s*Tanong\s+(\d{1,4})[.:]\s*(.*)",
+    ]
+
+    chapter_header_re = re.compile(
+        r"^(?:CHAPTER|Chapter|KABANATA|Kabanata|PART|Part|BAHAGI|Bahagi)\s+",
+        re.IGNORECASE,
+    )
 
     for page in pages:
         text = page.get("text", "")
@@ -39,7 +86,6 @@ def parse_answer_keys(
         chapter = page.get("chapter")
 
         lines = text.splitlines()
-        in_answer_key = False
 
         for line in lines:
             line_str = line.strip()
@@ -48,7 +94,7 @@ def parse_answer_keys(
 
             # If line is a choice or question stem, it cannot be an answer key header
             is_choice = any(re.match(c_pat, line_str) for c_pat in (c_patterns or []))
-            is_question = any(re.match(q_pat, line_str) for q_pat in (q_patterns or []))
+            is_question = any(re.match(q_pat, line_str) for q_pat in effective_q_patterns)
 
             # Check if this line signals an answer key section
             if not is_choice and not is_question:
@@ -58,11 +104,23 @@ def parse_answer_keys(
                         break
 
             if in_answer_key:
-                # Find all answers in the line
+                # 1. New chapter or part heading explicitly closes answer key section
+                if chapter_header_re.match(line_str):
+                    in_answer_key = False
+                    continue
+
+                # 2. Real question stem explicitly closes answer key section
+                if is_question and not is_answer_key_item_line(line_str, item_patterns):
+                    in_answer_key = False
+                    continue
+
+                # 3. Find all answers in the line
                 found_in_line = False
                 for i_pat in item_patterns:
                     matches = re.findall(i_pat, line_str)
                     if matches:
+                        if not is_answer_key_item_line(line_str, item_patterns):
+                            continue
                         found_in_line = True
                         for m in matches:
                             try:
@@ -76,7 +134,7 @@ def parse_answer_keys(
 
                 # Also support single-line identification/short-answer keys (e.g. "4 - Republic Act 6713")
                 if not found_in_line:
-                    text_ans_match = re.match(r"^\s*(\d{1,4})\s*[-–—.:]\s*(.+)$", line_str)
+                    text_ans_match = re.match(r"^\s*(\d{1,4})\s*[-–—:]\s*(.+)$", line_str)
                     if text_ans_match:
                         try:
                             q_num = int(text_ans_match.group(1))
@@ -89,15 +147,6 @@ def parse_answer_keys(
                                 global_keys.append((q_num, ans_val, page_num))
                         except (ValueError, IndexError):
                             pass
-
-                # If a new chapter or question heading appears, exit answer key section
-                if not found_in_line:
-                    if re.match(
-                        r"^(?:CHAPTER|Chapter|KABANATA|Kabanata|PART|Part|BAHAGI|Bahagi)\s+",
-                        line_str,
-                        re.IGNORECASE,
-                    ) or any(re.match(q_pat, line_str) for q_pat in (q_patterns or [])):
-                        in_answer_key = False
 
     return chapter_keys, global_keys
 
@@ -131,6 +180,7 @@ def parse_questions_from_pages(
     q_patterns: list[str],
     c_patterns: list[str],
     header_patterns: list[str],
+    item_patterns: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Pass 2: Extract question stems and choices across pages."""
     raw_questions: list[dict[str, Any]] = []
@@ -138,6 +188,11 @@ def parse_questions_from_pages(
     current_q: dict[str, Any] | None = None
     current_choice: dict[str, str] | None = None
     in_answer_key = False
+
+    chapter_header_re = re.compile(
+        r"^(?:CHAPTER|Chapter|KABANATA|Kabanata|PART|Part|BAHAGI|Bahagi)\s+",
+        re.IGNORECASE,
+    )
 
     for page in pages:
         text = page.get("text", "")
@@ -169,14 +224,14 @@ def parse_questions_from_pages(
 
             # If inside answer key, check if a new chapter or question restarts normal text
             if in_answer_key:
-                if re.match(
-                    r"^(?:CHAPTER|Chapter|KABANATA|Kabanata|PART|Part|BAHAGI|Bahagi)\s+",
-                    line_str,
-                    re.IGNORECASE,
-                ):
+                if chapter_header_re.match(line_str):
                     in_answer_key = False
                     continue
-                if any(re.match(q_pat, line_str) for q_pat in q_patterns):
+                # If this line is an answer key item line, stay in answer key
+                if item_patterns and is_answer_key_item_line(line_str, item_patterns):
+                    continue
+                # If it's a real question stem, exit answer key and parse question
+                if is_question:
                     in_answer_key = False
                     # Fall through to parse question
                 else:
@@ -330,7 +385,7 @@ def link_qa_pairs(
 
     # Pass 2: Parse Questions and Choices
     raw_questions = parse_questions_from_pages(
-        pages, q_patterns, c_patterns, ak_header_patterns
+        pages, q_patterns, c_patterns, ak_header_patterns, ak_item_patterns
     )
 
     linked_records: list[dict[str, Any]] = []
@@ -358,6 +413,7 @@ def link_qa_pairs(
         # Find answer in answer keys
         ak_hit = chapter_keys.get((chapter, raw_num))
         matched_key = None
+        is_ambiguous = False
         if ak_hit:
             canonical_choice_key, answer_key_page = ak_hit
             matched_key = (chapter, raw_num)
@@ -370,13 +426,26 @@ def link_qa_pairs(
                         answer_key_page = p_cand
                         matched_key = (c_cand, q_cand)
                         break
-            if not matched_key:
-                for (c_cand, q_cand), (ans_cand, p_cand) in chapter_keys.items():
-                    if q_cand == raw_num:
-                        canonical_choice_key = ans_cand
-                        answer_key_page = p_cand
-                        matched_key = (c_cand, q_cand)
-                        break
+            # Global fallback across all chapters is attempted if no inline answer is provided
+            if not matched_key and not inline_answer:
+                candidates = [
+                    ((c_cand, q_cand), (ans_cand, p_cand))
+                    for (c_cand, q_cand), (ans_cand, p_cand) in chapter_keys.items()
+                    if q_cand == raw_num
+                ]
+                if len(candidates) == 1:
+                    matched_key, (canonical_choice_key, answer_key_page) = candidates[0]
+                elif len(candidates) > 1:
+                    is_ambiguous = True
+                    candidate_chapters = [c[0][0] for c in candidates]
+                    msg = (
+                        f"{q_id} (Item {raw_num}): Ambiguous answer key match across multiple chapters: "
+                        f"{candidate_chapters}. Downgrading confidence to unresolved."
+                    )
+                    item_warnings.append(msg)
+                    warnings.append(msg)
+                    canonical_choice_key = None
+                    answer_key_page = None
 
         if matched_key:
             used_keys.add(matched_key)
@@ -407,9 +476,10 @@ def link_qa_pairs(
                 canonical_answer = None
                 canonical_choice_key = None
                 confidence = "unresolved"
-                msg = f"{q_id} (Item {raw_num}): No answer key entry found"
-                item_warnings.append(msg)
-                warnings.append(msg)
+                if not is_ambiguous:
+                    msg = f"{q_id} (Item {raw_num}): No answer key entry found"
+                    item_warnings.append(msg)
+                    warnings.append(msg)
 
         elif q_type == "identification":
             if canonical_choice_key:
@@ -424,14 +494,15 @@ def link_qa_pairs(
                 canonical_answer = None
                 canonical_choice_key = None
                 confidence = "unresolved"
-                msg = f"{q_id} (Item {raw_num}): Identification item has no answer"
-                item_warnings.append(msg)
-                warnings.append(msg)
+                if not is_ambiguous:
+                    msg = f"{q_id} (Item {raw_num}): Identification item has no answer"
+                    item_warnings.append(msg)
+                    warnings.append(msg)
 
         else:  # essay
             canonical_answer = inline_answer or (canonical_choice_key if canonical_choice_key else "Comprehensive discussion required.")
             canonical_choice_key = None
-            confidence = "low"
+            confidence = "unresolved" if is_ambiguous else "low"
 
         record: dict[str, Any] = {
             "question_id": q_id,
@@ -464,9 +535,7 @@ def link_qa_pairs(
         with temp_out.open("w", encoding="utf-8") as f:
             for rec in linked_records:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        if out_file.exists():
-            out_file.unlink()
-        temp_out.rename(out_file)
+        os.replace(temp_out, out_file)
     except Exception:
         if temp_out.exists():
             try:

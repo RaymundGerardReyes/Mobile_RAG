@@ -348,9 +348,7 @@ def build_content_pack(
         conn = None
 
         # Atomically publish to output path
-        if out_p.exists():
-            out_p.unlink()
-        temp_db_path.rename(out_p)
+        os.replace(temp_db_path, out_p)
 
     except Exception:
         if conn is not None:

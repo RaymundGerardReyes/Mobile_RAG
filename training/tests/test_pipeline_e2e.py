@@ -25,6 +25,8 @@ from ai_tutor_training.stages.build_passages import build_passages
 from ai_tutor_training.stages.extract_textbook import extract_textbook
 from ai_tutor_training.stages.link_qa_pairs import link_qa_pairs
 
+pytestmark = [pytest.mark.e2e, pytest.mark.integration]
+
 
 def test_full_pipeline_e2e_live_run(
     sample_pdf: Path,

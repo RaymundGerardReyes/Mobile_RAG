@@ -15,6 +15,8 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
     "reportlab>=4.0.0",
+    "hypothesis>=6.100.0",
+    "pytest-benchmark>=4.0.0",
 ]
 gpu = [
     "torch>=2.4.0",
@@ -29,3 +31,12 @@ ai-tutor-pipeline = "ai_tutor_training.cli:main"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "unit: Isolated pure function, regex, and provenance unit tests.",
+    "integration: Subsystem interaction, database operations, and stage handoffs.",
+    "regression: Defect prevention, historical edge cases, and Windows file-locking hardening.",
+    "path: Linearly independent basis path and branch coverage tests.",
+    "property: Generative property-based fuzz tests using Hypothesis.",
+    "stress: Scalability, latency, and throughput benchmarks.",
+    "e2e: End-to-end pipeline verification from PDF to SQLite.",
+]

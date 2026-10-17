@@ -13,6 +13,8 @@ from ai_tutor_training.contracts import (
     validate_record_against_schema,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.integration]
+
 
 def test_sample_pages_contract(sample_pages_path: Path, contracts_dir: Path) -> None:
     schema_path = contracts_dir / "extracted-page.schema.json"

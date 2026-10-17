@@ -6,6 +6,7 @@ import argparse
 import datetime
 import hashlib
 import json
+import os
 import re
 import sys
 import uuid
@@ -81,7 +82,7 @@ def extract_textbook(
     section_heading_patterns = stage_cfg.get(
         "section_heading_patterns",
         [
-            r"^(?:Section|Seksyon)\s+[\dIVXLCDM]+[.:]?\s*(.*)",
+            r"^(?:Section|Seksyon)(?:\s+[\dIVXLCDM]+)?[.:]?\s*(.*)",
             r"^(?:Vocabulary|Grammar|Reading Comprehension|Analogy|Logic|Word Problems)",
             r"^(?:Balarila|Talasalitaan|Pagbasa|Saligang Batas|R\.A\.\s*6713)",
         ],
@@ -150,9 +151,7 @@ def extract_textbook(
         with temp_out.open("w", encoding="utf-8") as f:
             for rec in extracted_pages:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        if out_file.exists():
-            out_file.unlink()
-        temp_out.rename(out_file)
+        os.replace(temp_out, out_file)
     except Exception:
         if temp_out.exists():
             try:

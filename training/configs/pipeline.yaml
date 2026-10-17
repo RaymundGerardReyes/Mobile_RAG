@@ -11,7 +11,7 @@ extract_textbook:
     - '^(?:ENGLISH|MATH|FILIPINO|GENERAL\s+(?:INFORMATION|LAWS?)|CLERICAL\s+OPERATIONS)'
     - '^(?:NUMERICAL\s+ABILITY|VERBAL\s+ABILITY|ANALYTICAL\s+ABILITY)'
   section_heading_patterns:
-    - '^(?:Section|Seksyon)\s+[\dIVXLCDM]+[.:]?\s*(.*)'
+    - '^(?:Section|Seksyon)(?:\s+[\dIVXLCDM]+)?[.:]?\s*(.*)'
     - '^(?:Vocabulary|Grammar|Reading Comprehension|Analogy|Logic|Word Problems)'
     - '^(?:Balarila|Talasalitaan|Pagbasa|Saligang Batas|R\.A\.\s*6713)'
 

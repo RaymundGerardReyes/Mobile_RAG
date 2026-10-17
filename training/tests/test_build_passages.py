@@ -15,6 +15,8 @@ from ai_tutor_training.stages.build_passages import (
     split_into_sentences,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.integration]
+
 
 def test_split_into_sentences() -> None:
     text = (

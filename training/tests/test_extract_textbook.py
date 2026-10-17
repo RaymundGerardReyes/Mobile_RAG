@@ -10,6 +10,8 @@ import pytest
 from ai_tutor_training.contracts import validate_jsonl_against_schema
 from ai_tutor_training.stages.extract_textbook import extract_textbook
 
+pytestmark = pytest.mark.integration
+
 
 def test_extract_textbook_synthetic_pdf(
     sample_pdf: Path, tmp_path: Path, pipeline_config: dict, contracts_dir: Path

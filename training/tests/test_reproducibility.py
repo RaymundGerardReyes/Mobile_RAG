@@ -23,6 +23,8 @@ SCRIPTS_DIR = REPO_ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+pytestmark = [pytest.mark.integration, pytest.mark.regression]
+
 from ai_tutor_training.content_pack import build_content_pack
 from ai_tutor_training.provenance import create_stage_manifest, save_stage_manifest
 from ai_tutor_training.stages.build_passages import build_passages

@@ -15,6 +15,8 @@ from ai_tutor_training.prompting import (
     sanitize_data_content,
 )
 
+pytestmark = pytest.mark.unit
+
 
 def test_free_answer_verdict_schema(contracts_dir: Path) -> None:
     schema_path = contracts_dir / "free-answer-verdict.schema.json"

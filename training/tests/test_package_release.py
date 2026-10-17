@@ -26,6 +26,8 @@ from package_release import (
     run_test_suites_gate,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.regression]
+
 
 @pytest.fixture
 def artifacts_dir(tmp_path: Path) -> Path:

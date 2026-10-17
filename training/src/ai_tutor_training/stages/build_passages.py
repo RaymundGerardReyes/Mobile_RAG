@@ -6,6 +6,7 @@ import argparse
 import datetime
 import hashlib
 import json
+import os
 import re
 import sys
 import uuid
@@ -199,14 +200,6 @@ def build_passages(
                 current_word_count += s_words
                 inner_idx += 1
 
-            if not chunk_sents:
-                # Progress at least 1 sentence even if huge
-                p_num, s_text = sentence_stream[idx]
-                chunk_sents.append(s_text)
-                chunk_pages.append(p_num)
-                current_word_count = count_words(s_text)
-                inner_idx = idx + 1
-
             passage_text = " ".join(chunk_sents).strip()
             content_hash = hashlib.sha256(passage_text.encode("utf-8")).hexdigest()
             passage_id = f"p{p_counter:04d}"
@@ -241,8 +234,6 @@ def build_passages(
                 rewind += 1
 
             step = (inner_idx - idx) - rewind
-            if step <= 0:
-                step = 1
             idx += step
 
     # Write output JSONL atomically
@@ -252,9 +243,7 @@ def build_passages(
         with temp_out.open("w", encoding="utf-8") as f:
             for p in passages:
                 f.write(json.dumps(p, ensure_ascii=False) + "\n")
-        if out_file.exists():
-            out_file.unlink()
-        temp_out.rename(out_file)
+        os.replace(temp_out, out_file)
     except Exception:
         if temp_out.exists():
             try:

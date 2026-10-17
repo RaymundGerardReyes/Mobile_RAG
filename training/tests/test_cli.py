@@ -13,6 +13,8 @@ import yaml
 
 from ai_tutor_training.cli import cli, load_yaml_config, main
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def cli_runner() -> CliRunner:

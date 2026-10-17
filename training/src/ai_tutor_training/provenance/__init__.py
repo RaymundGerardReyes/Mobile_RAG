@@ -156,9 +156,7 @@ def save_stage_manifest(manifest: dict[str, Any], output_path: Path | str) -> No
     try:
         with temp_p.open("w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2)
-        if p.exists():
-            p.unlink()
-        temp_p.rename(p)
+        os.replace(temp_p, p)
     except Exception:
         if temp_p.exists():
             try:

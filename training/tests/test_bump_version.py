@@ -19,6 +19,8 @@ from bump_version import (
     update_file_regex,
 )
 
+pytestmark = [pytest.mark.unit, pytest.mark.regression]
+
 
 def test_semver_parse_valid() -> None:
     v = SemVer.parse("1.4.2")
