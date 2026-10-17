@@ -1,12 +1,19 @@
 import React, { useState } from 'react';
-import { SafeAreaView, StatusBar, StyleSheet, View } from 'react-native';
+import { StatusBar, StyleSheet, View } from 'react-native';
 import { colors } from './src/theme/tokens.js';
-import { ReviewHomeScreen, StudyMode } from './src/features/review/ReviewHomeScreen.js';
+import {
+  ReviewHomeScreen,
+  SessionFormat,
+  StudyMode,
+} from './src/features/review/ReviewHomeScreen.js';
 import { QuizReviewScreen } from './src/features/quiz/QuizReviewScreen.js';
 import { Question } from './src/domain/types.js';
 import { TopicSummary } from './src/application/ports/question_repository.js';
 import { ModelRuntimeStatus } from './src/application/ports/local_llm_port.js';
-import { scoreMultipleChoice, scoreExactIdentification } from './src/domain/scoring.js';
+import {
+  scoreExactIdentification,
+  scoreMultipleChoice,
+} from './src/domain/scoring.js';
 import { SubmitAnswerResponse } from './src/application/use_cases/submit_answer.js';
 import { RetrievedPassage } from './src/application/ports/passage_retriever.js';
 
@@ -59,17 +66,42 @@ const SAMPLE_QUESTIONS: Question[] = [
     topicId: 'ph-constitution-general-info',
     questionType: 'multiple_choice',
     stem: 'According to Article II of the 1987 Philippine Constitution, what is the prime duty of the Government?',
-    canonicalExplanation: 'Article II, Section 4 declares that the prime duty of the Government is to serve and protect the people.',
+    canonicalExplanation:
+      'Article II, Section 4 declares that the prime duty of the Government is to serve and protect the people.',
     sourcePage: 12,
     difficulty: 'medium',
     contentVersion: '2026.10.1',
     canonicalChoiceId: 'c0002',
     canonicalAnswer: 'B',
     choices: [
-      { id: 'c0001', questionId: 'q0001', choiceKey: 'A', text: 'To collect taxes efficiently', sortOrder: 1 },
-      { id: 'c0002', questionId: 'q0001', choiceKey: 'B', text: 'To serve and protect the people', sortOrder: 2 },
-      { id: 'c0003', questionId: 'q0001', choiceKey: 'C', text: 'To maintain foreign embassies', sortOrder: 3 },
-      { id: 'c0004', questionId: 'q0001', choiceKey: 'D', text: 'To regulate private enterprises', sortOrder: 4 },
+      {
+        id: 'c0001',
+        questionId: 'q0001',
+        choiceKey: 'A',
+        text: 'To collect taxes efficiently',
+        sortOrder: 1,
+      },
+      {
+        id: 'c0002',
+        questionId: 'q0001',
+        choiceKey: 'B',
+        text: 'To serve and protect the people',
+        sortOrder: 2,
+      },
+      {
+        id: 'c0003',
+        questionId: 'q0001',
+        choiceKey: 'C',
+        text: 'To maintain foreign embassies',
+        sortOrder: 3,
+      },
+      {
+        id: 'c0004',
+        questionId: 'q0001',
+        choiceKey: 'D',
+        text: 'To regulate private enterprises',
+        sortOrder: 4,
+      },
     ],
   },
   {
@@ -77,17 +109,42 @@ const SAMPLE_QUESTIONS: Question[] = [
     topicId: 'ph-constitution-general-info',
     questionType: 'multiple_choice',
     stem: 'Under R.A. 6713, within how many days must public officials respond to letters and requests sent by the public?',
-    canonicalExplanation: 'Section 5(a) of R.A. 6713 mandates an official response within fifteen (15) working days from receipt.',
+    canonicalExplanation:
+      'Section 5(a) of R.A. 6713 mandates an official response within fifteen (15) working days from receipt.',
     sourcePage: 28,
     difficulty: 'medium',
     contentVersion: '2026.10.1',
     canonicalChoiceId: 'c0006',
     canonicalAnswer: 'B',
     choices: [
-      { id: 'c0005', questionId: 'q0002', choiceKey: 'A', text: '10 working days', sortOrder: 1 },
-      { id: 'c0006', questionId: 'q0002', choiceKey: 'B', text: '15 working days', sortOrder: 2 },
-      { id: 'c0007', questionId: 'q0002', choiceKey: 'C', text: '30 working days', sortOrder: 3 },
-      { id: 'c0008', questionId: 'q0002', choiceKey: 'D', text: '45 working days', sortOrder: 4 },
+      {
+        id: 'c0005',
+        questionId: 'q0002',
+        choiceKey: 'A',
+        text: '10 working days',
+        sortOrder: 1,
+      },
+      {
+        id: 'c0006',
+        questionId: 'q0002',
+        choiceKey: 'B',
+        text: '15 working days',
+        sortOrder: 2,
+      },
+      {
+        id: 'c0007',
+        questionId: 'q0002',
+        choiceKey: 'C',
+        text: '30 working days',
+        sortOrder: 3,
+      },
+      {
+        id: 'c0008',
+        questionId: 'q0002',
+        choiceKey: 'D',
+        text: '45 working days',
+        sortOrder: 4,
+      },
     ],
   },
   {
@@ -95,11 +152,13 @@ const SAMPLE_QUESTIONS: Question[] = [
     topicId: 'ph-constitution-general-info',
     questionType: 'identification',
     stem: 'What is the title of Republic Act No. 6713?',
-    canonicalExplanation: 'R.A. 6713 is the Code of Conduct and Ethical Standards for Public Officials and Employees.',
+    canonicalExplanation:
+      'R.A. 6713 is the Code of Conduct and Ethical Standards for Public Officials and Employees.',
     sourcePage: 26,
     difficulty: 'hard',
     contentVersion: '2026.10.1',
-    canonicalAnswer: 'Code of Conduct and Ethical Standards for Public Officials and Employees',
+    canonicalAnswer:
+      'Code of Conduct and Ethical Standards for Public Officials and Employees',
     choices: [],
   },
 ];
@@ -155,22 +214,32 @@ const SAMPLE_PASSAGES: Record<string, RetrievedPassage[]> = {
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<'home' | 'quiz'>('home');
   const [selectedMode, setSelectedMode] = useState<StudyMode>('all');
+  const [sessionFormat, setSessionFormat] = useState<SessionFormat>('quiz');
   const [questionIndex, setQuestionIndex] = useState(0);
   const [selectedChoiceId, setSelectedChoiceId] = useState<string | null>(null);
   const [freeTextInput, setFreeTextInput] = useState('');
-  const [submissionResult, setSubmissionResult] = useState<SubmitAnswerResponse | null>(null);
+  const [submissionResult, setSubmissionResult] =
+    useState<SubmitAnswerResponse | null>(null);
   const [aiExplanation, setAiExplanation] = useState<string | null>(null);
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [isSessionCompleted, setIsSessionCompleted] = useState(false);
 
   const modelStatus: ModelRuntimeStatus = { state: 'ready' };
+
   const currentQuestion = SAMPLE_QUESTIONS[questionIndex] || null;
-  const currentPassages = currentQuestion ? SAMPLE_PASSAGES[currentQuestion.id] || [] : [];
+  const currentPassages = currentQuestion
+    ? SAMPLE_PASSAGES[currentQuestion.id] || []
+    : [];
   const sourcePages = currentQuestion ? [currentQuestion.sourcePage] : [];
 
-  const handleStartSession = (_topicId?: string, mode?: StudyMode) => {
+  const handleStartSession = (
+    _topicId?: string,
+    mode?: StudyMode,
+    format: SessionFormat = 'quiz'
+  ) => {
     if (mode) setSelectedMode(mode);
+    setSessionFormat(format);
     setQuestionIndex(0);
     setSelectedChoiceId(null);
     setFreeTextInput('');
@@ -186,7 +255,10 @@ export default function App() {
 
     if (currentQuestion.questionType === 'multiple_choice') {
       if (!selectedChoiceId) return;
-      const scoreResult = scoreMultipleChoice(currentQuestion, selectedChoiceId);
+      const scoreResult = scoreMultipleChoice(
+        currentQuestion,
+        selectedChoiceId
+      );
       setSubmissionResult({
         attempt: {
           id: `att-${Date.now()}`,
@@ -204,7 +276,10 @@ export default function App() {
         canonicalExplanation: currentQuestion.canonicalExplanation ?? null,
       });
     } else {
-      const scoreResult = scoreExactIdentification(currentQuestion.canonicalAnswer, freeTextInput);
+      const scoreResult = scoreExactIdentification(
+        currentQuestion.canonicalAnswer,
+        freeTextInput
+      );
       setSubmissionResult({
         attempt: {
           id: `att-${Date.now()}`,
@@ -228,7 +303,6 @@ export default function App() {
     if (!currentQuestion) return;
     setIsGeneratingAi(true);
     setAiError(null);
-
     setTimeout(() => {
       setIsGeneratingAi(false);
       if (language === 'fil') {
@@ -257,7 +331,7 @@ export default function App() {
   };
 
   const handleRestartSession = () => {
-    handleStartSession();
+    handleStartSession(undefined, selectedMode, sessionFormat);
   };
 
   const handleReturnHome = () => {
@@ -266,44 +340,43 @@ export default function App() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={styles.container}>
       <StatusBar barStyle="dark-content" />
-      <View style={styles.content}>
-        {currentScreen === 'home' ? (
-          <ReviewHomeScreen
-            topicSummaries={INITIAL_TOPICS}
-            selectedMode={selectedMode}
-            modelStatus={modelStatus}
-            onSelectMode={setSelectedMode}
-            onStartSession={handleStartSession}
-          />
-        ) : (
-          <QuizReviewScreen
-            question={currentQuestion}
-            questionNumber={questionIndex + 1}
-            totalQuestions={SAMPLE_QUESTIONS.length}
-            selectedChoiceId={selectedChoiceId}
-            freeTextInput={freeTextInput}
-            submissionResult={submissionResult}
-            supportingPassages={currentPassages}
-            sourcePages={sourcePages}
-            aiExplanation={aiExplanation}
-            modelStatus={modelStatus}
-            isGeneratingAi={isGeneratingAi}
-            aiError={aiError}
-            isSessionCompleted={isSessionCompleted}
-            onSelectChoice={setSelectedChoiceId}
-            onChangeFreeText={setFreeTextInput}
-            onSubmitAnswer={handleSubmitAnswer}
-            onRequestExplainMore={handleRequestExplainMore}
-            onCancelGeneration={() => setIsGeneratingAi(false)}
-            onNextQuestion={handleNextQuestion}
-            onRestartSession={handleRestartSession}
-            onReturnHome={handleReturnHome}
-          />
-        )}
-      </View>
-    </SafeAreaView>
+      {currentScreen === 'home' ? (
+        <ReviewHomeScreen
+          topicSummaries={INITIAL_TOPICS}
+          selectedMode={selectedMode}
+          modelStatus={modelStatus}
+          onSelectMode={setSelectedMode}
+          onStartSession={handleStartSession}
+        />
+      ) : (
+        <QuizReviewScreen
+          question={currentQuestion}
+          questionNumber={questionIndex + 1}
+          totalQuestions={SAMPLE_QUESTIONS.length}
+          selectedChoiceId={selectedChoiceId}
+          freeTextInput={freeTextInput}
+          submissionResult={submissionResult}
+          supportingPassages={currentPassages}
+          sourcePages={sourcePages}
+          aiExplanation={aiExplanation}
+          modelStatus={modelStatus}
+          isGeneratingAi={isGeneratingAi}
+          aiError={aiError}
+          isSessionCompleted={isSessionCompleted}
+          sessionFormat={sessionFormat}
+          onSelectChoice={setSelectedChoiceId}
+          onChangeFreeText={setFreeTextInput}
+          onSubmitAnswer={handleSubmitAnswer}
+          onRequestExplainMore={handleRequestExplainMore}
+          onCancelGeneration={() => setIsGeneratingAi(false)}
+          onNextQuestion={handleNextQuestion}
+          onRestartSession={handleRestartSession}
+          onReturnHome={handleReturnHome}
+        />
+      )}
+    </View>
   );
 }
 
@@ -311,9 +384,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.neutral.surface,
-  },
-  content: {
-    flex: 1,
   },
 });
 

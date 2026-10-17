@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -19,7 +18,10 @@ import {
   AnimatedProgressBar,
   CSCButton,
   CSCChipBadge,
-  ContentCard,
+  EmptyState,
+  ScreenContainer,
+  SectionHeader,
+  SubjectRow,
 } from '../../components/CorePrimitives.js';
 import {
   QuestionRepository,
@@ -31,6 +33,7 @@ import {
 } from '../../application/ports/local_llm_port.js';
 
 export type StudyMode = 'all' | 'unanswered' | 'weak_areas';
+export type SessionFormat = 'quiz' | 'flashcards';
 
 export interface ReviewHomeScreenProps {
   topicSummaries: TopicSummary[];
@@ -38,14 +41,17 @@ export interface ReviewHomeScreenProps {
   modelStatus: ModelRuntimeStatus;
   isLoading?: boolean;
   onSelectMode: (mode: StudyMode) => void;
-  onStartSession: (topicId?: string, mode?: StudyMode) => void;
+  onStartSession: (
+    topicId?: string,
+    mode?: StudyMode,
+    format?: SessionFormat
+  ) => void;
   onRefresh?: () => void;
 }
 
 /**
- * Main Civil Service Reviewer Home Dashboard Screen.
- * Displays overall study progress, study mode selector, topic cards,
- * and offline AI model readiness status.
+ * Editorial, content-first Home / Today's Study Screen for iPhone 16.
+ * Prioritizes starting a study session and selecting a subject over dashboard widgets.
  */
 export function ReviewHomeScreen({
   topicSummaries,
@@ -54,7 +60,6 @@ export function ReviewHomeScreen({
   isLoading = false,
   onSelectMode,
   onStartSession,
-  onRefresh,
 }: ReviewHomeScreenProps) {
   const totalQuestions = topicSummaries.reduce(
     (sum, t) => sum + t.totalQuestions,
@@ -70,6 +75,7 @@ export function ReviewHomeScreen({
   );
   const overallAccuracy =
     totalAnswered > 0 ? Math.round((totalCorrect / totalAnswered) * 100) : 0;
+  const remainingQuestions = Math.max(totalQuestions - totalAnswered, 0);
 
   const getModelBadgeVariant = () => {
     switch (modelStatus.state) {
@@ -91,29 +97,26 @@ export function ReviewHomeScreen({
     switch (modelStatus.state) {
       case 'ready':
       case 'loaded':
-        return 'Offline AI: Ready';
+        return 'Offline AI Ready';
       case 'verifying':
-        return 'Offline AI: Verifying Hash';
+        return 'Verifying Model';
       case 'loading':
-        return 'Offline AI: Loading weights';
+        return 'Loading Model';
       case 'generating':
-        return 'Offline AI: Active';
+        return 'AI Active';
       case 'missing':
       default:
-        return 'Offline AI: Not Installed';
+        return 'Offline Mode';
     }
   };
 
   return (
-    <ScrollView
-      style={styles.screen}
-      contentContainerStyle={styles.contentContainer}
-    >
-      {/* 1. Header & AI Model Readiness Pill */}
-      <View style={styles.headerRow}>
-        <View style={styles.headerTitles}>
-          <Text style={styles.appTitle}>Civil Service Reviewer</Text>
-          <Text style={styles.appSubtitle}>Philippine Civil Service Exam</Text>
+    <ScreenContainer>
+      {/* 1. Editorial Page Heading & Restrained Status Pill */}
+      <View style={styles.pageHeader}>
+        <View style={styles.headerTitleBlock}>
+          <Text style={styles.overline}>PHILIPPINE CIVIL SERVICE EXAM</Text>
+          <Text style={styles.pageTitle}>Today’s Study</Text>
         </View>
         <CSCChipBadge
           label={getModelBadgeLabel()}
@@ -122,41 +125,25 @@ export function ReviewHomeScreen({
         />
       </View>
 
-      {/* 2. Overall Progress Overview Card */}
-      <ContentCard style={styles.overviewCard}>
-        <View style={styles.overviewHeader}>
-          <Text style={styles.sectionTitle}>Overall Progress</Text>
-          <Text style={styles.accuracyLabel}>
-            {totalAnswered > 0 ? `${overallAccuracy}% Accuracy` : 'Not Started'}
-          </Text>
+      {/* 2. Primary Study Task: Mode Selection + Prominent Start Action */}
+      <View style={styles.primaryTaskSurface}>
+        <View style={styles.taskHeaderRow}>
+          <Text style={styles.taskHeading}>Continue Studying</Text>
+          {remainingQuestions > 0 && (
+            <CSCChipBadge
+              label={`${remainingQuestions} left`}
+              variant="accentRed"
+              indicatorDot
+            />
+          )}
         </View>
+        <Text style={styles.taskSubheading}>
+          Select your focus filter and begin a distraction-free practice quiz or
+          flashcard recall session.
+        </Text>
 
-        <AnimatedProgressBar
-          current={totalAnswered}
-          total={totalQuestions || 1}
-          height={8}
-        />
-
-        <View style={styles.statsRow}>
-          <View style={styles.statCol}>
-            <Text style={styles.statValue}>{totalQuestions}</Text>
-            <Text style={styles.statDescription}>Total Questions</Text>
-          </View>
-          <View style={styles.statCol}>
-            <Text style={styles.statValue}>{totalAnswered}</Text>
-            <Text style={styles.statDescription}>Answered</Text>
-          </View>
-          <View style={styles.statCol}>
-            <Text style={styles.statValue}>{totalCorrect}</Text>
-            <Text style={styles.statDescription}>Correct</Text>
-          </View>
-        </View>
-      </ContentCard>
-
-      {/* 3. Study Mode Selector */}
-      <View style={styles.modeSection}>
-        <Text style={styles.modeSectionTitle}>Study Mode</Text>
-        <View style={styles.modeButtonGroup}>
+        {/* Segmented Filter Control */}
+        <View style={styles.segmentedControl}>
           {(['all', 'unanswered', 'weak_areas'] as const).map((mode) => {
             const isSelected = selectedMode === mode;
             const label =
@@ -173,14 +160,14 @@ export function ReviewHomeScreen({
                 accessibilityState={{ selected: isSelected }}
                 onPress={() => onSelectMode(mode)}
                 style={[
-                  styles.modeButton,
-                  isSelected && styles.modeButtonSelected,
+                  styles.segmentButton,
+                  isSelected && styles.segmentButtonSelected,
                 ]}
               >
                 <Text
                   style={[
-                    styles.modeButtonText,
-                    isSelected && styles.modeButtonTextSelected,
+                    styles.segmentButtonText,
+                    isSelected && styles.segmentButtonTextSelected,
                   ]}
                 >
                   {label}
@@ -190,83 +177,120 @@ export function ReviewHomeScreen({
           })}
         </View>
 
-        <CSCButton
-          title="Start Comprehensive Review"
-          variant="primary"
-          onPress={() => onStartSession(undefined, selectedMode)}
-          style={styles.quickStartButton}
-        />
+        {/* Primary & Secondary Session Starters */}
+        <View style={styles.primaryActionsGroup}>
+          <CSCButton
+            title="Start Practice Quiz"
+            variant="primary"
+            onPress={() => onStartSession(undefined, selectedMode, 'quiz')}
+          />
+          <CSCButton
+            title="Study Flashcards"
+            variant="secondary"
+            onPress={() =>
+              onStartSession(undefined, selectedMode, 'flashcards')
+            }
+          />
+        </View>
       </View>
 
-      {/* 4. Topics Breakdown Cards */}
-      <View style={styles.topicsSection}>
-        <Text style={styles.topicsSectionTitle}>Topics & Subject Areas</Text>
-
+      {/* 3. Subject & Topic List (Clean iOS Grouped List Rows) */}
+      <View style={styles.sectionBlock}>
+        <SectionHeader
+          title="Subjects & Coverage"
+          rightText={`${topicSummaries.length} subjects`}
+        />
         {isLoading && topicSummaries.length === 0 ? (
-          <View style={styles.loadingContainer}>
+          <View style={styles.loadingBox}>
             <ActivityIndicator size="small" color={colors.brand.primary} />
-            <Text style={styles.loadingText}>Loading study topics...</Text>
+            <Text style={styles.loadingText}>Loading subjects...</Text>
           </View>
+        ) : topicSummaries.length === 0 ? (
+          <EmptyState
+            title="No Subjects Available"
+            message="Import a Civil Service content pack to begin studying."
+          />
         ) : (
-          topicSummaries.map((summary, idx) => {
-            const topicAccuracy =
-              summary.answeredCount > 0
-                ? Math.round((summary.correctCount / summary.answeredCount) * 100)
-                : null;
+          <View style={styles.listGroup}>
+            {topicSummaries.map((summary, idx) => {
+              const topicAccuracy =
+                summary.answeredCount > 0
+                  ? Math.round(
+                      (summary.correctCount / summary.answeredCount) * 100
+                    )
+                  : null;
 
-            return (
-              <ContentCard
-                key={summary.topic.id}
-                delayMs={idx * 40}
-                style={styles.topicCard}
-              >
-                <View style={styles.topicHeader}>
-                  <Text style={styles.topicTitle}>{summary.topic.title}</Text>
-                  {topicAccuracy !== null && (
-                    <CSCChipBadge
-                      label={`${topicAccuracy}%`}
-                      variant={topicAccuracy >= 75 ? 'success' : 'warning'}
-                    />
-                  )}
-                </View>
-
-                <View style={styles.topicProgressContainer}>
-                  <View style={styles.topicProgressMeta}>
-                    <Text style={styles.topicProgressText}>
-                      {summary.answeredCount} of {summary.totalQuestions} answered
-                    </Text>
-                  </View>
-                  <AnimatedProgressBar
-                    current={summary.answeredCount}
-                    total={summary.totalQuestions || 1}
-                    height={6}
-                  />
-                </View>
-
-                <CSCButton
-                  title="Practice Topic"
-                  variant="secondary"
-                  onPress={() => onStartSession(summary.topic.id, selectedMode)}
-                  style={styles.topicPracticeButton}
+              return (
+                <SubjectRow
+                  key={summary.topic.id}
+                  title={summary.topic.title}
+                  answeredCount={summary.answeredCount}
+                  totalQuestions={summary.totalQuestions}
+                  accuracyPercent={topicAccuracy}
+                  isLast={idx === topicSummaries.length - 1}
+                  onPress={() =>
+                    onStartSession(summary.topic.id, selectedMode, 'quiz')
+                  }
                 />
-              </ContentCard>
-            );
-          })
+              );
+            })}
+          </View>
         )}
       </View>
-    </ScrollView>
+
+      {/* 4. Secondary Progress Summary (Placed Below Main Study Tasks) */}
+      <View style={styles.sectionBlock}>
+        <SectionHeader
+          title="Study Progress"
+          rightText={
+            totalAnswered > 0 ? `${overallAccuracy}% Accuracy` : 'Not Started'
+          }
+        />
+        <View style={styles.progressSummarySurface}>
+          <View style={styles.progressCountLine}>
+            <Text style={styles.progressCountText}>
+              {totalAnswered} of {totalQuestions} total questions completed
+            </Text>
+          </View>
+          <AnimatedProgressBar
+            current={totalAnswered}
+            total={totalQuestions || 1}
+            height={6}
+          />
+          <View style={styles.metricsRow}>
+            <View style={styles.metricItem}>
+              <Text style={styles.metricValue}>{totalQuestions}</Text>
+              <Text style={styles.metricLabel}>Total</Text>
+            </View>
+            <View style={styles.metricDivider} />
+            <View style={styles.metricItem}>
+              <Text style={styles.metricValue}>{totalAnswered}</Text>
+              <Text style={styles.metricLabel}>Reviewed</Text>
+            </View>
+            <View style={styles.metricDivider} />
+            <View style={styles.metricItem}>
+              <Text style={styles.metricValue}>{totalCorrect}</Text>
+              <Text style={styles.metricLabel}>Correct</Text>
+            </View>
+          </View>
+        </View>
+      </View>
+    </ScreenContainer>
   );
 }
 
 export interface ConnectedReviewHomeScreenProps {
   repository: QuestionRepository;
   llmPort?: LocalLlmPort;
-  onStartSession: (topicId?: string, mode?: StudyMode) => void;
+  onStartSession: (
+    topicId?: string,
+    mode?: StudyMode,
+    format?: SessionFormat
+  ) => void;
 }
 
 /**
  * Connected Container for ReviewHomeScreen.
- * Fetches topic summaries from QuestionRepository and monitors Local LLM status.
  */
 export function ConnectedReviewHomeScreen({
   repository,
@@ -285,7 +309,6 @@ export function ConnectedReviewHomeScreen({
     try {
       const summaries = await repository.getTopicSummaries();
       setTopicSummaries(summaries);
-
       if (llmPort) {
         const status = await llmPort.getStatus();
         setModelStatus(status);
@@ -314,161 +337,141 @@ export function ConnectedReviewHomeScreen({
   );
 }
 
-/**
- * Reusable alias matching architectural Pattern C.
- */
 export const HomeDashboardScreen = ConnectedReviewHomeScreen;
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.neutral.surface,
-  },
-  contentContainer: {
-    padding: spacing.base,
-    paddingBottom: spacing.section,
-    gap: spacing.lg,
-  },
-  headerRow: {
+  pageHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: spacing.sm,
-  },
-  headerTitles: {
-    flex: 1,
-  },
-  appTitle: {
-    fontSize: typography.title2.fontSize,
-    fontWeight: '700',
-    color: colors.brand.primary,
-  },
-  appSubtitle: {
-    fontSize: typography.footnote.fontSize,
-    color: colors.neutral.textSecondary,
-    marginTop: spacing.xs,
-  },
-  overviewCard: {
-    gap: spacing.md,
-  },
-  overviewHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  sectionTitle: {
-    fontSize: typography.headline.fontSize,
-    fontWeight: '600',
-    color: colors.neutral.textPrimary,
-  },
-  accuracyLabel: {
-    fontSize: typography.subheadline.fontSize,
-    fontWeight: '600',
-    color: colors.brand.primary,
-  },
-  statsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     paddingTop: spacing.xs,
   },
-  statCol: {
-    alignItems: 'center',
+  headerTitleBlock: {
     flex: 1,
+    gap: 2,
   },
-  statValue: {
-    fontSize: typography.title2.fontSize,
+  overline: {
+    fontSize: typography.caption.fontSize,
+    fontWeight: '600',
+    color: colors.neutral.textSecondary,
+    letterSpacing: 0.6,
+  },
+  pageTitle: {
+    fontSize: typography.title1.fontSize, // 28pt strong screen heading
+    lineHeight: typography.title1.lineHeight,
     fontWeight: '700',
     color: colors.neutral.textPrimary,
   },
-  statDescription: {
-    fontSize: typography.caption.fontSize,
-    color: colors.neutral.textSecondary,
-    marginTop: spacing.xs,
-  },
-  modeSection: {
-    gap: spacing.sm,
-  },
-  modeSectionTitle: {
-    fontSize: typography.subheadline.fontSize,
-    fontWeight: '600',
-    color: colors.neutral.textPrimary,
-  },
-  modeButtonGroup: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  modeButton: {
-    flex: 1,
-    minHeight: controls.minTouchTarget,
-    borderRadius: radius.md,
-    borderWidth: borders.hairline,
-    borderColor: colors.neutral.borderDefault,
+  primaryTaskSurface: {
     backgroundColor: colors.neutral.surfaceElevated,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.sm,
-  },
-  modeButtonSelected: {
-    backgroundColor: colors.brand.tint,
-    borderColor: colors.brand.primary,
-    borderWidth: borders.emphasized,
-  },
-  modeButtonText: {
-    fontSize: typography.footnote.fontSize,
-    fontWeight: '500',
-    color: colors.neutral.textPrimary,
-  },
-  modeButtonTextSelected: {
-    fontWeight: '600',
-    color: colors.brand.primary,
-  },
-  quickStartButton: {
-    marginTop: spacing.xs,
-  },
-  topicsSection: {
+    borderRadius: radius.lg,
+    borderWidth: borders.hairline,
+    borderColor: colors.neutral.borderSubtle,
+    padding: spacing.xl,
     gap: spacing.md,
   },
-  topicsSectionTitle: {
-    fontSize: typography.headline.fontSize,
-    fontWeight: '600',
-    color: colors.neutral.textPrimary,
-  },
-  topicCard: {
-    gap: spacing.sm,
-  },
-  topicHeader: {
+  taskHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  topicTitle: {
+  taskHeading: {
     fontSize: typography.headline.fontSize,
-    fontWeight: '600',
+    fontWeight: '700',
     color: colors.neutral.textPrimary,
-    flex: 1,
-    marginRight: spacing.sm,
   },
-  topicDescription: {
-    fontSize: typography.footnote.fontSize,
+  taskSubheading: {
+    fontSize: typography.subheadline.fontSize,
+    lineHeight: typography.subheadline.lineHeight,
     color: colors.neutral.textSecondary,
-    lineHeight: typography.footnote.lineHeight,
   },
-  topicProgressContainer: {
+  segmentedControl: {
+    flexDirection: 'row',
+    backgroundColor: colors.neutral.surfaceMuted,
+    padding: spacing.xs,
+    borderRadius: radius.md,
     gap: spacing.xs,
+  },
+  segmentButton: {
+    flex: 1,
+    minHeight: controls.minTouchTarget,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xs,
+  },
+  segmentButtonSelected: {
+    backgroundColor: colors.neutral.surfaceElevated,
+    borderWidth: borders.hairline,
+    borderColor: colors.brand.border,
+  },
+  segmentButtonText: {
+    fontSize: typography.footnote.fontSize,
+    fontWeight: '500',
+    color: colors.neutral.textSecondary,
+  },
+  segmentButtonTextSelected: {
+    fontWeight: '700',
+    color: colors.brand.primary,
+  },
+  primaryActionsGroup: {
+    gap: spacing.sm,
     marginTop: spacing.xs,
   },
-  topicProgressMeta: {
+  sectionBlock: {
+    gap: spacing.sm,
+  },
+  listGroup: {
+    borderRadius: radius.lg,
+    borderWidth: borders.hairline,
+    borderColor: colors.neutral.borderSubtle,
+    backgroundColor: colors.neutral.surfaceElevated,
+    overflow: 'hidden',
+  },
+  progressSummarySurface: {
+    backgroundColor: colors.neutral.surfaceElevated,
+    borderRadius: radius.lg,
+    borderWidth: borders.hairline,
+    borderColor: colors.neutral.borderSubtle,
+    padding: spacing.base,
+    gap: spacing.md,
+  },
+  progressCountLine: {
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
-  topicProgressText: {
+  progressCountText: {
+    fontSize: typography.subheadline.fontSize,
+    color: colors.neutral.textSecondary,
+    fontWeight: '500',
+  },
+  metricsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    paddingTop: spacing.xs,
+  },
+  metricItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  metricDivider: {
+    width: borders.hairline,
+    height: 28,
+    backgroundColor: colors.neutral.divider,
+  },
+  metricValue: {
+    fontSize: typography.headline.fontSize,
+    fontWeight: '700',
+    color: colors.neutral.textPrimary,
+  },
+  metricLabel: {
     fontSize: typography.caption.fontSize,
     color: colors.neutral.textSecondary,
+    marginTop: 2,
   },
-  topicPracticeButton: {
-    marginTop: spacing.xs,
-  },
-  loadingContainer: {
+  loadingBox: {
     padding: spacing.xl,
     alignItems: 'center',
     justifyContent: 'center',
@@ -479,3 +482,4 @@ const styles = StyleSheet.create({
     color: colors.neutral.textSecondary,
   },
 });
+

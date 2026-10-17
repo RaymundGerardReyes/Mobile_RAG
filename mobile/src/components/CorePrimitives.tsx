@@ -1,10 +1,12 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
-  AccessibilityInfo,
   ActivityIndicator,
   Animated,
-  Easing,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
+  SafeAreaView,
+  ScrollView,
   StyleProp,
   StyleSheet,
   Text,
@@ -12,316 +14,401 @@ import {
   View,
   ViewStyle,
 } from 'react-native';
-import { borders, colors, controls, motion, radius, spacing, typography } from '../theme/tokens.js';
+import {
+  borders,
+  colors,
+  controls,
+  motion,
+  radius,
+  spacing,
+  typography,
+} from '../theme/tokens.js';
 
-/**
- * Custom hook respecting system-wide Accessibility "Reduce Motion" setting.
- */
-export function useReducedMotion(): boolean {
-  const [reduceMotion, setReduceMotion] = useState(false);
+// ============================================================================
+// 1. LAYOUT PRIMITIVES (ScreenContainer, ScreenHeader, SectionHeader, BottomActionBar)
+// ============================================================================
 
-  useEffect(() => {
-    let mounted = true;
-    AccessibilityInfo.isReduceMotionEnabled()
-      .then((enabled: boolean) => {
-        if (mounted) setReduceMotion(enabled);
-      })
-      .catch(() => {
-        if (mounted) setReduceMotion(false);
-      });
-
-    const subscription = AccessibilityInfo.addEventListener(
-      'reduceMotionChanged',
-      (enabled: boolean) => {
-        if (mounted) setReduceMotion(enabled);
-      }
-    );
-
-    return () => {
-      mounted = false;
-      subscription?.remove();
-    };
-  }, []);
-
-  return reduceMotion;
+export interface ScreenContainerProps {
+  children: React.ReactNode;
+  scrollable?: boolean;
+  footer?: React.ReactNode;
+  header?: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+  contentContainerStyle?: StyleProp<ViewStyle>;
 }
 
-export type ButtonVariant = 'primary' | 'secondary' | 'accent' | 'danger';
+/**
+ * Safe-area-aware foundation for every screen on iPhone 16.
+ * Enforces 20pt horizontal editorial padding and predictable scroll insets.
+ */
+export function ScreenContainer({
+  children,
+  scrollable = true,
+  footer,
+  header,
+  style,
+  contentContainerStyle,
+}: ScreenContainerProps) {
+  return (
+    <SafeAreaView style={[styles.safeArea, style]}>
+      <KeyboardAvoidingView
+        style={styles.flexOne}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        {header}
+        {scrollable ? (
+          <ScrollView
+            style={styles.flexOne}
+            contentContainerStyle={[
+              styles.scrollContent,
+              contentContainerStyle,
+            ]}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {children}
+          </ScrollView>
+        ) : (
+          <View style={[styles.staticContent, contentContainerStyle]}>
+            {children}
+          </View>
+        )}
+        {footer}
+      </KeyboardAvoidingView>
+    </SafeAreaView>
+  );
+}
+
+export interface ScreenHeaderProps {
+  title: string;
+  subtitle?: string;
+  onBack?: () => void;
+  backLabel?: string;
+  rightElement?: React.ReactNode;
+}
+
+/**
+ * Compact, native-feeling iOS navigation header.
+ */
+export function ScreenHeader({
+  title,
+  subtitle,
+  onBack,
+  backLabel = 'Home',
+  rightElement,
+}: ScreenHeaderProps) {
+  return (
+    <View style={styles.screenHeader}>
+      <View style={styles.screenHeaderLeft}>
+        {onBack && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Back to ${backLabel}`}
+            hitSlop={12}
+            onPress={onBack}
+            style={({ pressed }) => [
+              styles.backButton,
+              pressed && { opacity: motion.opacity.pressed },
+            ]}
+          >
+            <Text style={styles.backChevron}>‹</Text>
+            <Text style={styles.backLabelText}>{backLabel}</Text>
+          </Pressable>
+        )}
+        <View style={styles.headerTitleContainer}>
+          {subtitle ? (
+            <Text style={styles.screenHeaderOverline} numberOfLines={1}>
+              {subtitle.toUpperCase()}
+            </Text>
+          ) : null}
+          <Text style={styles.screenHeaderTitle} numberOfLines={1}>
+            {title}
+          </Text>
+        </View>
+      </View>
+      {rightElement ? (
+        <View style={styles.screenHeaderRight}>{rightElement}</View>
+      ) : null}
+    </View>
+  );
+}
+
+export interface SectionHeaderProps {
+  title: string;
+  actionLabel?: string;
+  onActionPress?: () => void;
+  rightText?: string;
+}
+
+/**
+ * Editorial section header with optional secondary metadata or action.
+ */
+export function SectionHeader({
+  title,
+  actionLabel,
+  onActionPress,
+  rightText,
+}: SectionHeaderProps) {
+  return (
+    <View style={styles.sectionHeaderRow}>
+      <Text style={styles.sectionHeaderText}>{title}</Text>
+      {actionLabel && onActionPress ? (
+        <Pressable
+          accessibilityRole="button"
+          hitSlop={8}
+          onPress={onActionPress}
+        >
+          <Text style={styles.sectionActionText}>{actionLabel}</Text>
+        </Pressable>
+      ) : rightText ? (
+        <Text style={styles.sectionRightMeta}>{rightText}</Text>
+      ) : null}
+    </View>
+  );
+}
+
+export interface BottomActionBarProps {
+  children: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+}
+
+/**
+ * Persistent bottom action bar respecting thumb reach and iPhone safe areas.
+ */
+export function BottomActionBar({ children, style }: BottomActionBarProps) {
+  return <View style={[styles.bottomActionBar, style]}>{children}</View>;
+}
+
+// ============================================================================
+// 2. CORE INTERACTIVE PRIMITIVES (CSCButton, CSCChipBadge, ContentCard, AnimatedProgressBar)
+// ============================================================================
+
+export type CSCButtonVariant = 'primary' | 'secondary' | 'subtle';
 
 export interface CSCButtonProps {
   title: string;
-  variant?: ButtonVariant;
+  onPress: () => void;
+  variant?: CSCButtonVariant;
   disabled?: boolean;
   loading?: boolean;
-  onPress: () => void;
-  accessibilityLabel?: string;
   style?: StyleProp<ViewStyle>;
   textStyle?: StyleProp<TextStyle>;
 }
 
 /**
- * Tactile CSC Button with Apple HIG touch target >= 44pt,
- * 120ms opacity feedback, and spring scale animation.
- * Falls back to 120ms opacity cross-fade when Reduce Motion is enabled.
+ * Accessible iOS button with >= 50pt height and deterministic pressed/disabled states.
  */
 export function CSCButton({
   title,
+  onPress,
   variant = 'primary',
   disabled = false,
   loading = false,
-  onPress,
-  accessibilityLabel,
   style,
   textStyle,
 }: CSCButtonProps) {
-  const reducedMotion = useReducedMotion();
-  const scaleAnim = useRef(new Animated.Value(1)).current;
-  const opacityAnim = useRef(new Animated.Value(motion.opacity.resting)).current;
-
-  useEffect(() => {
-    if (disabled || loading) {
-      scaleAnim.setValue(motion.scale.standard);
-      opacityAnim.setValue(motion.opacity.resting);
-    }
-  }, [disabled, loading]);
-
-  const handlePressIn = () => {
-    if (disabled || loading) return;
-
-    if (reducedMotion) {
-      Animated.timing(opacityAnim, {
-        toValue: motion.opacity.pressed,
-        duration: motion.duration.fast,
-        useNativeDriver: true,
-      }).start();
-      return;
-    }
-
-    Animated.parallel([
-      Animated.spring(scaleAnim, {
-        toValue: motion.scale.pressed,
-        useNativeDriver: true,
-        stiffness: motion.spring.snappy.stiffness,
-        damping: motion.spring.snappy.damping,
-        mass: motion.spring.snappy.mass,
-      }),
-      Animated.timing(opacityAnim, {
-        toValue: motion.opacity.pressed,
-        duration: motion.duration.fast,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  };
-
-  const handlePressOut = () => {
-    if (reducedMotion) {
-      Animated.timing(opacityAnim, {
-        toValue: motion.opacity.resting,
-        duration: motion.duration.fast,
-        useNativeDriver: true,
-      }).start();
-      return;
-    }
-
-    Animated.parallel([
-      Animated.spring(scaleAnim, {
-        toValue: motion.scale.standard,
-        useNativeDriver: true,
-        stiffness: motion.spring.snappy.stiffness,
-        damping: motion.spring.snappy.damping,
-        mass: motion.spring.snappy.mass,
-      }),
-      Animated.timing(opacityAnim, {
-        toValue: motion.opacity.resting,
-        duration: motion.duration.fast,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  };
-
-  const isPrimary = variant === 'primary';
-  const isSecondary = variant === 'secondary';
-  const isAccent = variant === 'accent';
-  const isDanger = variant === 'danger';
+  const isInteractive = !disabled && !loading;
 
   return (
-    <Animated.View
-      style={[
-        {
-          transform: [{ scale: scaleAnim }],
-          opacity: opacityAnim,
-        },
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled: !isInteractive, busy: loading }}
+      disabled={!isInteractive}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.buttonBase,
+        variant === 'primary' && styles.buttonPrimary,
+        variant === 'secondary' && styles.buttonSecondary,
+        variant === 'subtle' && styles.buttonSubtle,
+        !isInteractive && styles.buttonDisabled,
+        pressed && isInteractive && styles.buttonPressed,
         style,
       ]}
     >
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={accessibilityLabel || title}
-        accessibilityState={{ disabled: disabled || loading, busy: loading }}
-        disabled={disabled || loading}
-        onPress={onPress}
-        onPressIn={handlePressIn}
-        onPressOut={handlePressOut}
-        style={[
-          styles.buttonBase,
-          isPrimary && styles.buttonPrimary,
-          isSecondary && styles.buttonSecondary,
-          isAccent && styles.buttonAccent,
-          isDanger && styles.buttonDanger,
-          disabled && styles.buttonDisabled,
-        ]}
-      >
-        {loading ? (
-          <ActivityIndicator
-            size="small"
-            color={isPrimary || isAccent ? colors.brand.contrastText : colors.brand.primary}
-          />
-        ) : (
-          <Text
-            style={[
-              styles.buttonTextBase,
-              isPrimary && styles.buttonTextPrimary,
-              isSecondary && styles.buttonTextSecondary,
-              isAccent && styles.buttonTextAccent,
-              isDanger && styles.buttonTextDanger,
-              disabled && styles.buttonTextDisabled,
-              textStyle,
-            ]}
-          >
-            {title}
-          </Text>
-        )}
-      </Pressable>
-    </Animated.View>
+      {loading ? (
+        <ActivityIndicator
+          size="small"
+          color={
+            variant === 'primary'
+              ? colors.brand.contrastText
+              : colors.brand.primary
+          }
+        />
+      ) : (
+        <Text
+          style={[
+            styles.buttonTextBase,
+            variant === 'primary' && styles.buttonTextPrimary,
+            variant === 'secondary' && styles.buttonTextSecondary,
+            variant === 'subtle' && styles.buttonTextSubtle,
+            !isInteractive && styles.buttonTextDisabled,
+            textStyle,
+          ]}
+        >
+          {title}
+        </Text>
+      )}
+    </Pressable>
   );
 }
 
-export interface ContentCardProps {
-  children: React.ReactNode;
-  style?: StyleProp<ViewStyle>;
-  delayMs?: number;
-}
-
-/**
- * Structured 16pt radius Content Card with subtle hairline border
- * and 6pt vertical entrance offset with Easing.out(Easing.cubic).
- */
-export function ContentCard({ children, style, delayMs = 0 }: ContentCardProps) {
-  const reducedMotion = useReducedMotion();
-  const opacityAnim = useRef(new Animated.Value(reducedMotion ? 1 : 0)).current;
-  const translateYAnim = useRef(new Animated.Value(reducedMotion ? 0 : motion.distance.subtle)).current;
-
-  useEffect(() => {
-    if (reducedMotion) {
-      opacityAnim.setValue(1);
-      translateYAnim.setValue(0);
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      Animated.parallel([
-        Animated.timing(opacityAnim, {
-          toValue: 1,
-          duration: motion.duration.normal,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-        Animated.timing(translateYAnim, {
-          toValue: 0,
-          duration: motion.duration.normal,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-      ]).start();
-    }, delayMs);
-
-    return () => clearTimeout(timer);
-  }, [reducedMotion, delayMs]);
-
-  return (
-    <Animated.View
-      style={[
-        styles.cardBase,
-        {
-          opacity: opacityAnim,
-          transform: [{ translateY: translateYAnim }],
-        },
-        style,
-      ]}
-    >
-      {children}
-    </Animated.View>
-  );
-}
-
-export type ChipBadgeVariant = 'neutral' | 'brand' | 'accentRed' | 'success' | 'warning';
+export type CSCChipVariant =
+  | 'brand'
+  | 'accentRed'
+  | 'success'
+  | 'warning'
+  | 'neutral';
 
 export interface CSCChipBadgeProps {
   label: string;
-  variant?: ChipBadgeVariant;
+  variant?: CSCChipVariant;
   indicatorDot?: boolean;
   style?: StyleProp<ViewStyle>;
-  textStyle?: StyleProp<TextStyle>;
-  accessibilityLabel?: string;
 }
 
 /**
- * Accessible 8pt radius badge supporting neutral, brand blue, and 5% CSC Red dot/border accent.
- * Ensures 100% WCAG AA contrast compliance by pairing accent red with dark primary text.
+ * High-contrast status and metadata badge adhering to WCAG AA rules.
+ * Pairs accentRed with dark primary text (#191D2E) and a red indicator dot.
  */
 export function CSCChipBadge({
   label,
   variant = 'neutral',
   indicatorDot = false,
   style,
-  textStyle,
-  accessibilityLabel,
 }: CSCChipBadgeProps) {
-  const isAccentRed = variant === 'accentRed';
-  const showDot = indicatorDot || isAccentRed;
+  const getVariantStyles = () => {
+    switch (variant) {
+      case 'brand':
+        return {
+          container: {
+            backgroundColor: colors.brand.tint,
+            borderColor: colors.brand.border,
+          },
+          text: { color: colors.brand.primary },
+          dot: colors.brand.primary,
+        };
+      case 'accentRed':
+        return {
+          container: {
+            backgroundColor: colors.accent.tint,
+            borderColor: colors.accent.light,
+          },
+          // Strictly pair accentRed surface with dark textPrimary for WCAG AAA compliance
+          text: { color: colors.neutral.textPrimary },
+          dot: colors.accent.primary,
+        };
+      case 'success':
+        return {
+          container: {
+            backgroundColor: colors.semantic.correct.surface,
+            borderColor: colors.semantic.correct.border,
+          },
+          text: { color: colors.semantic.correct.text },
+          dot: colors.semantic.correct.text,
+        };
+      case 'warning':
+        return {
+          container: {
+            backgroundColor: colors.semantic.warning.surface,
+            borderColor: colors.semantic.warning.border,
+          },
+          text: { color: colors.semantic.warning.text },
+          dot: colors.semantic.warning.text,
+        };
+      case 'neutral':
+      default:
+        return {
+          container: {
+            backgroundColor: colors.neutral.surfaceMuted,
+            borderColor: colors.neutral.borderSubtle,
+          },
+          text: { color: colors.neutral.textSecondary },
+          dot: colors.neutral.textSecondary,
+        };
+    }
+  };
+
+  const vStyles = getVariantStyles();
 
   return (
-    <View
-      accessibilityRole="text"
-      accessibilityLabel={accessibilityLabel || label}
-      style={[
-        styles.chipBadgeBase,
-        variant === 'neutral' && styles.chipBadgeNeutral,
-        variant === 'brand' && styles.chipBadgeBrand,
-        variant === 'accentRed' && styles.chipBadgeAccentRed,
-        variant === 'success' && styles.chipBadgeSuccess,
-        variant === 'warning' && styles.chipBadgeWarning,
-        style,
-      ]}
-    >
-      {showDot && (
-        <View
-          style={[
-            styles.chipBadgeDot,
-            variant === 'neutral' && styles.chipBadgeDotNeutral,
-            variant === 'brand' && styles.chipBadgeDotBrand,
-            variant === 'accentRed' && styles.chipBadgeDotAccentRed,
-            variant === 'success' && styles.chipBadgeDotSuccess,
-            variant === 'warning' && styles.chipBadgeDotWarning,
-          ]}
-        />
+    <View style={[styles.chipBase, vStyles.container, style]}>
+      {indicatorDot && (
+        <View style={[styles.chipDot, { backgroundColor: vStyles.dot }]} />
       )}
-      <Text
-        style={[
-          styles.chipBadgeTextBase,
-          variant === 'neutral' && styles.chipBadgeTextNeutral,
-          variant === 'brand' && styles.chipBadgeTextBrand,
-          variant === 'accentRed' && styles.chipBadgeTextAccentRed,
-          variant === 'success' && styles.chipBadgeTextSuccess,
-          variant === 'warning' && styles.chipBadgeTextWarning,
-          textStyle,
-        ]}
-      >
-        {label}
-      </Text>
+      <Text style={[styles.chipText, vStyles.text]}>{label}</Text>
     </View>
   );
 }
+
+export interface ContentCardProps {
+  children: React.ReactNode;
+  delayMs?: number;
+  style?: StyleProp<ViewStyle>;
+}
+
+/**
+ * Restrained surface container with 1pt subtle border and no heavy shadows.
+ */
+export function ContentCard({ children, style }: ContentCardProps) {
+  return <View style={[styles.contentCard, style]}>{children}</View>;
+}
+
+export interface AnimatedProgressBarProps {
+  current: number;
+  total: number;
+  height?: number;
+  color?: string;
+}
+
+/**
+ * Smooth horizontal progress bar communicating completion clearly.
+ */
+export function AnimatedProgressBar({
+  current,
+  total,
+  height = 6,
+  color = colors.brand.primary,
+}: AnimatedProgressBarProps) {
+  const safeTotal = Math.max(total, 1);
+  const ratio = Math.min(Math.max(current / safeTotal, 0), 1);
+  const animatedWidth = useRef(new Animated.Value(ratio)).current;
+
+  useEffect(() => {
+    Animated.timing(animatedWidth, {
+      toValue: ratio,
+      duration: motion.duration.normal,
+      useNativeDriver: false,
+    }).start();
+  }, [ratio, animatedWidth]);
+
+  const widthInterpolated = animatedWidth.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0%', '100%'],
+  });
+
+  return (
+    <View
+      accessibilityRole="progressbar"
+      accessibilityValue={{ min: 0, max: safeTotal, now: current }}
+      style={[styles.progressTrack, { height }]}
+    >
+      <Animated.View
+        style={[
+          styles.progressFill,
+          {
+            height,
+            backgroundColor: color,
+            width: widthInterpolated,
+          },
+        ]}
+      />
+    </View>
+  );
+}
+
+// ============================================================================
+// 3. LEARNING PRIMITIVES (AnimatedChoiceRow, SubjectRow, Flashcard, Feedback, Summary)
+// ============================================================================
 
 export interface AnimatedChoiceRowProps {
   choiceKey: string;
@@ -330,16 +417,13 @@ export interface AnimatedChoiceRowProps {
   disabled?: boolean;
   isCorrect?: boolean;
   isIncorrect?: boolean;
-  onPress: () => void;
   index?: number;
-  accessibilityLabel?: string;
-  style?: StyleProp<ViewStyle>;
-  textStyle?: StyleProp<TextStyle>;
+  onPress: () => void;
 }
 
 /**
- * Tactile 12pt radius multiple-choice row with 120ms press feedback,
- * semantic grading states, and optional staggered entrance.
+ * Large, thumb-friendly multiple-choice option row (minHeight: 58pt).
+ * Communicates selected, correct, and incorrect states using color, border weight, and text badges.
  */
 export function AnimatedChoiceRow({
   choiceKey,
@@ -349,264 +433,440 @@ export function AnimatedChoiceRow({
   isCorrect = false,
   isIncorrect = false,
   onPress,
-  index = 0,
-  accessibilityLabel,
-  style,
-  textStyle,
 }: AnimatedChoiceRowProps) {
-  const reducedMotion = useReducedMotion();
-  const scaleAnim = useRef(new Animated.Value(1)).current;
-  const opacityAnim = useRef(new Animated.Value(motion.opacity.resting)).current;
-  const entranceAnim = useRef(new Animated.Value(reducedMotion ? 1 : 0)).current;
-
-  useEffect(() => {
-    if (reducedMotion) {
-      entranceAnim.setValue(1);
-      return;
+  const getRowStyle = (): ViewStyle => {
+    if (isCorrect) {
+      return {
+        backgroundColor: colors.semantic.correct.surface,
+        borderColor: colors.semantic.correct.border,
+        borderWidth: borders.emphasized,
+      };
     }
-    const timer = setTimeout(() => {
-      Animated.timing(entranceAnim, {
-        toValue: 1,
-        duration: motion.duration.normal,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start();
-    }, index * 40);
-
-    return () => clearTimeout(timer);
-  }, [reducedMotion, index]);
-
-  useEffect(() => {
-    if (disabled) {
-      scaleAnim.setValue(motion.scale.standard);
-      opacityAnim.setValue(motion.opacity.resting);
+    if (isIncorrect) {
+      return {
+        backgroundColor: colors.semantic.incorrect.surface,
+        borderColor: colors.semantic.incorrect.border,
+        borderWidth: borders.emphasized,
+      };
     }
-  }, [disabled]);
-
-  const handlePressIn = () => {
-    if (disabled) return;
-
-    if (reducedMotion) {
-      Animated.timing(opacityAnim, {
-        toValue: motion.opacity.pressed,
-        duration: motion.duration.fast,
-        useNativeDriver: true,
-      }).start();
-      return;
+    if (selected) {
+      return {
+        backgroundColor: colors.brand.tint,
+        borderColor: colors.brand.primary,
+        borderWidth: borders.focused,
+      };
     }
-
-    Animated.parallel([
-      Animated.spring(scaleAnim, {
-        toValue: motion.scale.pressed,
-        useNativeDriver: true,
-        stiffness: motion.spring.snappy.stiffness,
-        damping: motion.spring.snappy.damping,
-        mass: motion.spring.snappy.mass,
-      }),
-      Animated.timing(opacityAnim, {
-        toValue: motion.opacity.pressed,
-        duration: motion.duration.fast,
-        useNativeDriver: true,
-      }),
-    ]).start();
+    return {
+      backgroundColor: colors.neutral.surfaceElevated,
+      borderColor: colors.neutral.borderDefault,
+      borderWidth: borders.hairline,
+    };
   };
 
-  const handlePressOut = () => {
-    if (reducedMotion) {
-      Animated.timing(opacityAnim, {
-        toValue: motion.opacity.resting,
-        duration: motion.duration.fast,
-        useNativeDriver: true,
-      }).start();
-      return;
+  const getBadgeStyle = (): ViewStyle => {
+    if (isCorrect) {
+      return {
+        backgroundColor: colors.semantic.correct.text,
+        borderColor: colors.semantic.correct.text,
+      };
     }
-
-    Animated.parallel([
-      Animated.spring(scaleAnim, {
-        toValue: motion.scale.standard,
-        useNativeDriver: true,
-        stiffness: motion.spring.snappy.stiffness,
-        damping: motion.spring.snappy.damping,
-        mass: motion.spring.snappy.mass,
-      }),
-      Animated.timing(opacityAnim, {
-        toValue: motion.opacity.resting,
-        duration: motion.duration.fast,
-        useNativeDriver: true,
-      }),
-    ]).start();
+    if (isIncorrect) {
+      return {
+        backgroundColor: colors.semantic.incorrect.text,
+        borderColor: colors.semantic.incorrect.text,
+      };
+    }
+    if (selected) {
+      return {
+        backgroundColor: colors.brand.primary,
+        borderColor: colors.brand.primary,
+      };
+    }
+    return {
+      backgroundColor: colors.neutral.surfaceMuted,
+      borderColor: colors.neutral.borderDefault,
+    };
   };
 
-  const choiceStateLabel = isCorrect
-    ? 'Correct'
-    : isIncorrect
-    ? 'Incorrect'
-    : selected
-    ? 'Selected'
-    : '';
+  const getKeyTextColor = (): string => {
+    if (isCorrect || isIncorrect || selected) {
+      return colors.brand.contrastText;
+    }
+    return colors.neutral.textPrimary;
+  };
+
+  const getStateLabel = (): string | null => {
+    if (isCorrect) return '✓ Correct';
+    if (isIncorrect) return '✕ Your Choice';
+    return null;
+  };
+
+  const stateLabel = getStateLabel();
 
   return (
-    <Animated.View
-      style={[
-        {
-          transform: [
-            {
-              translateY: entranceAnim.interpolate({
-                inputRange: [0, 1],
-                outputRange: [motion.distance.subtle, 0],
-              }),
-            },
-          ],
-          opacity: entranceAnim,
-        },
-        style,
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{
+        selected,
+        disabled,
+      }}
+      accessibilityLabel={`Option ${choiceKey}: ${text}${
+        stateLabel ? `, ${stateLabel}` : ''
+      }`}
+      disabled={disabled}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.choiceRowBase,
+        getRowStyle(),
+        pressed && !disabled && styles.choiceRowPressed,
       ]}
     >
-      <Animated.View
-        style={{
-          transform: [{ scale: scaleAnim }],
-          opacity: opacityAnim,
-        }}
-      >
-        <Pressable
-          accessibilityRole="radio"
-          accessibilityLabel={accessibilityLabel || `${choiceKey}: ${text} ${choiceStateLabel}`}
-          accessibilityState={{
-            checked: selected,
-            disabled,
-          }}
-          disabled={disabled}
-          onPress={onPress}
-          onPressIn={handlePressIn}
-          onPressOut={handlePressOut}
+      <View style={[styles.choiceKeyBadge, getBadgeStyle()]}>
+        <Text style={[styles.choiceKeyText, { color: getKeyTextColor() }]}>
+          {choiceKey}
+        </Text>
+      </View>
+
+      <View style={styles.choiceTextWrapper}>
+        <Text
           style={[
-            styles.choiceRowBase,
-            selected && styles.choiceRowSelected,
-            isCorrect && styles.choiceRowCorrect,
-            isIncorrect && styles.choiceRowIncorrect,
+            styles.choiceText,
+            (selected || isCorrect) && styles.choiceTextEmphasized,
           ]}
         >
-          <View
+          {text}
+        </Text>
+        {stateLabel && (
+          <Text
             style={[
-              styles.choiceKeyBadge,
-              selected && styles.choiceKeyBadgeSelected,
-              isCorrect && styles.choiceKeyBadgeCorrect,
-              isIncorrect && styles.choiceKeyBadgeIncorrect,
+              styles.choiceStatusCaption,
+              {
+                color: isCorrect
+                  ? colors.semantic.correct.text
+                  : colors.semantic.incorrect.text,
+              },
             ]}
           >
-            <Text
-              style={[
-                styles.choiceKeyText,
-                selected && styles.choiceKeyTextSelected,
-                isCorrect && styles.choiceKeyTextCorrect,
-                isIncorrect && styles.choiceKeyTextIncorrect,
-              ]}
-            >
-              {choiceKey}
-            </Text>
-          </View>
-          <Text style={[styles.choiceText, textStyle]}>{text}</Text>
-          {isCorrect && <Text style={styles.choiceStatusIcon}>✓</Text>}
-          {isIncorrect && <Text style={[styles.choiceStatusIcon, styles.choiceStatusIconIncorrect]}>✕</Text>}
-        </Pressable>
-      </Animated.View>
-    </Animated.View>
+            {stateLabel}
+          </Text>
+        )}
+      </View>
+    </Pressable>
   );
 }
 
-/**
- * Reusable alias matching the design specification.
- */
-export const AnimatedChoiceCard = AnimatedChoiceRow;
-
-export interface AnimatedProgressBarProps {
-  progress?: number;
-  current?: number;
-  total?: number;
-  height?: number;
-  style?: StyleProp<ViewStyle>;
-  barColor?: string;
-  trackColor?: string;
-  accessibilityLabel?: string;
+export interface SubjectRowProps {
+  title: string;
+  answeredCount: number;
+  totalQuestions: number;
+  accuracyPercent: number | null;
+  onPress: () => void;
+  isLast?: boolean;
 }
 
 /**
- * Smooth 200ms ease-out progress bar using useNativeDriver: true.
- * Respects system Reduce Motion settings.
+ * Compact, accessible iOS list row for subjects/topics on the Home & Library screens.
+ * Replaces repetitive nested cards with clean horizontal dividers and a trailing chevron.
  */
-export function AnimatedProgressBar({
-  progress,
-  current,
-  total,
-  height = 6,
-  style,
-  barColor = colors.brand.primary,
-  trackColor = colors.neutral.borderSubtle,
-  accessibilityLabel,
-}: AnimatedProgressBarProps) {
-  const reducedMotion = useReducedMotion();
-
-  const ratio = Math.max(
-    0,
-    Math.min(
-      1,
-      total !== undefined && total > 0 && current !== undefined
-        ? current / total
-        : progress ?? 0
-    )
+export function SubjectRow({
+  title,
+  answeredCount,
+  totalQuestions,
+  accuracyPercent,
+  onPress,
+  isLast = false,
+}: SubjectRowProps) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${title}, ${answeredCount} of ${totalQuestions} answered${
+        accuracyPercent !== null ? `, ${accuracyPercent}% accuracy` : ''
+      }`}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.subjectRow,
+        !isLast && styles.subjectRowDivider,
+        pressed && styles.subjectRowPressed,
+      ]}
+    >
+      <View style={styles.subjectRowMain}>
+        <View style={styles.subjectRowTitleLine}>
+          <Text style={styles.subjectRowTitle}>{title}</Text>
+          {accuracyPercent !== null && (
+            <CSCChipBadge
+              label={`${accuracyPercent}%`}
+              variant={accuracyPercent >= 75 ? 'success' : 'warning'}
+            />
+          )}
+        </View>
+        <Text style={styles.subjectRowMeta}>
+          {answeredCount} of {totalQuestions} questions reviewed
+        </Text>
+        <View style={styles.subjectRowProgress}>
+          <AnimatedProgressBar
+            current={answeredCount}
+            total={totalQuestions || 1}
+            height={4}
+          />
+        </View>
+      </View>
+      <Text style={styles.subjectRowChevron}>›</Text>
+    </Pressable>
   );
+}
 
-  const animValue = useRef(new Animated.Value(ratio)).current;
+export interface FlashcardProps {
+  topicLabel?: string;
+  frontPrompt: string;
+  backAnswer: string;
+  explanation?: string | null;
+  sourcePage?: number;
+  revealed: boolean;
+  onReveal: () => void;
+}
 
-  useEffect(() => {
-    if (reducedMotion) {
-      animValue.setValue(ratio);
-      return;
-    }
+/**
+ * Dedicated Flashcard component with controlled reveal state and clear typography.
+ */
+export function Flashcard({
+  topicLabel = 'CONCEPT RECALL',
+  frontPrompt,
+  backAnswer,
+  explanation,
+  sourcePage,
+  revealed,
+  onReveal,
+}: FlashcardProps) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={
+        revealed
+          ? `Answer revealed: ${backAnswer}`
+          : `Flashcard prompt: ${frontPrompt}. Tap to reveal answer.`
+      }
+      disabled={revealed}
+      onPress={onReveal}
+      style={({ pressed }) => [
+        styles.flashcardSurface,
+        pressed && !revealed && { opacity: motion.opacity.pressed },
+      ]}
+    >
+      <View style={styles.flashcardMetaRow}>
+        <Text style={styles.flashcardOverline}>{topicLabel.toUpperCase()}</Text>
+        {sourcePage ? (
+          <CSCChipBadge label={`p. ${sourcePage}`} variant="neutral" />
+        ) : null}
+      </View>
 
-    Animated.timing(animValue, {
-      toValue: ratio,
-      duration: motion.duration.normal,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
-  }, [ratio, reducedMotion]);
+      <Text style={styles.flashcardPromptText}>{frontPrompt}</Text>
 
-  const percentage = Math.round(ratio * 100);
+      {!revealed ? (
+        <View style={styles.flashcardHintBox}>
+          <Text style={styles.flashcardHintText}>Tap to reveal answer</Text>
+        </View>
+      ) : (
+        <View style={styles.flashcardBackSection}>
+          <View style={styles.divider} />
+          <Text style={styles.flashcardAnswerLabel}>OFFICIAL ANSWER</Text>
+          <Text style={styles.flashcardAnswerText}>{backAnswer}</Text>
+          {explanation ? (
+            <View style={styles.flashcardExplanationBox}>
+              <Text style={styles.flashcardExplanationLabel}>
+                Why this is correct
+              </Text>
+              <Text style={styles.flashcardExplanationText}>{explanation}</Text>
+            </View>
+          ) : null}
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
+export interface AnswerFeedbackBannerProps {
+  isCorrect: boolean;
+  score: number;
+  canonicalAnswer?: string | null;
+}
+
+/**
+ * Semantic feedback banner combining color, border, icon symbol, and explicit text.
+ */
+export function AnswerFeedbackBanner({
+  isCorrect,
+  score,
+  canonicalAnswer,
+}: AnswerFeedbackBannerProps) {
+  const isPartial = !isCorrect && score > 0;
 
   return (
     <View
-      accessibilityRole="progressbar"
-      accessibilityLabel={accessibilityLabel || `Progress ${percentage}%`}
-      accessibilityValue={{ min: 0, max: 100, now: percentage }}
+      accessibilityRole="alert"
       style={[
-        styles.progressTrack,
-        {
-          height,
-          backgroundColor: trackColor,
-        },
-        style,
+        styles.feedbackBanner,
+        isCorrect
+          ? styles.feedbackCorrect
+          : isPartial
+          ? styles.feedbackPartial
+          : styles.feedbackIncorrect,
       ]}
     >
-      <Animated.View
+      <Text
         style={[
-          styles.progressFill,
+          styles.feedbackTitle,
           {
-            height,
-            backgroundColor: barColor,
-            transform: [{ scaleX: animValue }],
+            color: isCorrect
+              ? colors.semantic.correct.text
+              : isPartial
+              ? colors.semantic.warning.text
+              : colors.semantic.incorrect.text,
           },
         ]}
-      />
+      >
+        {isCorrect
+          ? '✓ Correct Answer'
+          : isPartial
+          ? `! Partially Correct (${Math.round(score * 100)}%)`
+          : `✕ Incorrect — Official Answer: ${canonicalAnswer ?? 'See below'}`}
+      </Text>
+    </View>
+  );
+}
+
+export interface EmptyStateProps {
+  title: string;
+  message: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}
+
+export function EmptyState({
+  title,
+  message,
+  actionLabel,
+  onAction,
+}: EmptyStateProps) {
+  return (
+    <View style={styles.emptyStateBox}>
+      <Text style={styles.emptyStateTitle}>{title}</Text>
+      <Text style={styles.emptyStateMessage}>{message}</Text>
+      {actionLabel && onAction && (
+        <CSCButton
+          title={actionLabel}
+          variant="secondary"
+          onPress={onAction}
+          style={styles.emptyStateButton}
+        />
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: colors.neutral.surface,
+  },
+  flexOne: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingHorizontal: spacing.xl, // 20pt iPhone 16 horizontal padding
+    paddingTop: spacing.base,
+    paddingBottom: spacing.xxxl,
+    gap: spacing.xl,
+  },
+  staticContent: {
+    flex: 1,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.base,
+  },
+  screenHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    backgroundColor: colors.neutral.canvas,
+    borderBottomWidth: borders.hairline,
+    borderBottomColor: colors.neutral.borderSubtle,
+    minHeight: 52,
+  },
+  screenHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: spacing.md,
+  },
+  backButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: controls.minTouchTarget,
+    paddingRight: spacing.xs,
+  },
+  backChevron: {
+    fontSize: 24,
+    fontWeight: '600',
+    color: colors.brand.primary,
+    marginRight: 2,
+    lineHeight: 26,
+  },
+  backLabelText: {
+    fontSize: typography.callout.fontSize,
+    fontWeight: '600',
+    color: colors.brand.primary,
+  },
+  headerTitleContainer: {
+    flex: 1,
+  },
+  screenHeaderOverline: {
+    fontSize: typography.caption.fontSize,
+    fontWeight: '600',
+    color: colors.neutral.textSecondary,
+    letterSpacing: 0.5,
+  },
+  screenHeaderTitle: {
+    fontSize: typography.headline.fontSize,
+    fontWeight: '700',
+    color: colors.neutral.textPrimary,
+  },
+  screenHeaderRight: {
+    marginLeft: spacing.sm,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'baseline',
+    marginBottom: spacing.xs,
+  },
+  sectionHeaderText: {
+    fontSize: typography.title2.fontSize,
+    fontWeight: '600',
+    color: colors.neutral.textPrimary,
+  },
+  sectionActionText: {
+    fontSize: typography.subheadline.fontSize,
+    fontWeight: '600',
+    color: colors.brand.primary,
+  },
+  sectionRightMeta: {
+    fontSize: typography.subheadline.fontSize,
+    fontWeight: '600',
+    color: colors.brand.primary,
+  },
+  bottomActionBar: {
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.base,
+    backgroundColor: colors.neutral.canvas,
+    borderTopWidth: borders.hairline,
+    borderTopColor: colors.neutral.borderSubtle,
+  },
   buttonBase: {
-    minHeight: controls.buttonHeight,
-    paddingHorizontal: spacing.lg,
-    borderRadius: radius.md,
+    minHeight: controls.buttonHeight, // 50pt
+    borderRadius: radius.md, // 12pt consistent radius
+    paddingHorizontal: spacing.xl,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
@@ -615,202 +875,276 @@ const styles = StyleSheet.create({
     backgroundColor: colors.brand.primary,
   },
   buttonSecondary: {
-    backgroundColor: colors.neutral.surface,
+    backgroundColor: colors.neutral.surfaceElevated,
     borderWidth: borders.hairline,
-    borderColor: colors.neutral.borderDefault,
+    borderColor: colors.brand.border,
   },
-  buttonAccent: {
-    backgroundColor: colors.accent.primary,
-  },
-  buttonDanger: {
-    backgroundColor: colors.semantic.incorrect.surface,
-    borderWidth: borders.hairline,
-    borderColor: colors.semantic.incorrect.border,
+  buttonSubtle: {
+    backgroundColor: colors.neutral.surfaceMuted,
   },
   buttonDisabled: {
     backgroundColor: colors.neutral.surfaceMuted,
     borderColor: colors.neutral.borderSubtle,
-    borderWidth: borders.hairline,
+  },
+  buttonPressed: {
+    opacity: motion.opacity.pressed,
+    transform: [{ scale: motion.scale.pressed }],
   },
   buttonTextBase: {
     fontSize: typography.body.fontSize,
     fontWeight: '600',
-    textAlign: 'center',
   },
   buttonTextPrimary: {
     color: colors.brand.contrastText,
   },
   buttonTextSecondary: {
+    color: colors.brand.primary,
+  },
+  buttonTextSubtle: {
     color: colors.neutral.textPrimary,
-  },
-  buttonTextAccent: {
-    color: colors.accent.contrastText,
-  },
-  buttonTextDanger: {
-    color: colors.semantic.incorrect.text,
   },
   buttonTextDisabled: {
     color: colors.neutral.textMuted,
   },
-  cardBase: {
-    backgroundColor: colors.neutral.surfaceElevated,
-    borderRadius: radius.lg,
-    borderWidth: borders.hairline,
-    borderColor: colors.neutral.borderSubtle,
-    padding: spacing.base,
-  },
-  chipBadgeBase: {
+  chipBase: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
     borderRadius: radius.sm,
     borderWidth: borders.hairline,
+    gap: spacing.xs,
   },
-  chipBadgeNeutral: {
-    backgroundColor: colors.neutral.surfaceElevated,
-    borderColor: colors.neutral.borderSubtle,
-  },
-  chipBadgeBrand: {
-    backgroundColor: colors.brand.tint,
-    borderColor: colors.brand.border,
-  },
-  chipBadgeAccentRed: {
-    backgroundColor: colors.neutral.surfaceElevated,
-    borderColor: colors.accent.primary,
-  },
-  chipBadgeSuccess: {
-    backgroundColor: colors.semantic.correct.surface,
-    borderColor: colors.semantic.correct.border,
-  },
-  chipBadgeWarning: {
-    backgroundColor: colors.semantic.warning.surface,
-    borderColor: colors.semantic.warning.border,
-  },
-  chipBadgeDot: {
+  chipDot: {
     width: 6,
     height: 6,
     borderRadius: radius.pill,
-    marginRight: spacing.xs,
   },
-  chipBadgeDotNeutral: {
-    backgroundColor: colors.neutral.textSecondary,
-  },
-  chipBadgeDotBrand: {
-    backgroundColor: colors.brand.primary,
-  },
-  chipBadgeDotAccentRed: {
-    backgroundColor: colors.accent.primary,
-  },
-  chipBadgeDotSuccess: {
-    backgroundColor: colors.semantic.correct.text,
-  },
-  chipBadgeDotWarning: {
-    backgroundColor: colors.semantic.warning.text,
-  },
-  chipBadgeTextBase: {
-    fontSize: typography.footnote.fontSize,
+  chipText: {
+    fontSize: typography.caption.fontSize,
     fontWeight: '600',
   },
-  chipBadgeTextNeutral: {
-    color: colors.neutral.textSecondary,
-  },
-  chipBadgeTextBrand: {
-    color: colors.brand.primary,
-  },
-  chipBadgeTextAccentRed: {
-    color: colors.neutral.textPrimary, // WCAG AA 100% compliant dark text
-  },
-  chipBadgeTextSuccess: {
-    color: colors.semantic.correct.text,
-  },
-  chipBadgeTextWarning: {
-    color: colors.semantic.warning.text,
-  },
-  choiceRowBase: {
-    minHeight: controls.minimumTouchTarget,
-    padding: spacing.md,
-    borderRadius: radius.md,
+  contentCard: {
+    backgroundColor: colors.neutral.surfaceElevated,
+    borderRadius: radius.lg,
     borderWidth: borders.hairline,
     borderColor: colors.neutral.borderSubtle,
-    backgroundColor: colors.neutral.surfaceElevated,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-  },
-  choiceRowSelected: {
-    borderWidth: borders.emphasized,
-    borderColor: colors.brand.primary,
-    backgroundColor: colors.brand.tint,
-  },
-  choiceRowCorrect: {
-    borderWidth: borders.focused,
-    borderColor: colors.semantic.correct.border,
-    backgroundColor: colors.semantic.correct.surface,
-  },
-  choiceRowIncorrect: {
-    borderWidth: borders.emphasized,
-    borderColor: colors.semantic.incorrect.border,
-    backgroundColor: colors.semantic.incorrect.surface,
-  },
-  choiceKeyBadge: {
-    width: 28,
-    height: 28,
-    borderRadius: radius.sm,
-    borderWidth: borders.hairline,
-    borderColor: colors.neutral.borderDefault,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.neutral.surface,
-  },
-  choiceKeyBadgeSelected: {
-    backgroundColor: colors.brand.primary,
-    borderColor: colors.brand.primary,
-  },
-  choiceKeyBadgeCorrect: {
-    backgroundColor: colors.semantic.correct.border,
-    borderColor: colors.semantic.correct.text,
-  },
-  choiceKeyBadgeIncorrect: {
-    backgroundColor: colors.semantic.incorrect.border,
-    borderColor: colors.semantic.incorrect.text,
-  },
-  choiceKeyText: {
-    fontSize: typography.subheadline.fontSize,
-    fontWeight: '600',
-    color: colors.neutral.textPrimary,
-  },
-  choiceKeyTextSelected: {
-    color: colors.brand.contrastText,
-  },
-  choiceKeyTextCorrect: {
-    color: colors.semantic.correct.text,
-  },
-  choiceKeyTextIncorrect: {
-    color: colors.semantic.incorrect.text,
-  },
-  choiceText: {
-    flex: 1,
-    fontSize: typography.body.fontSize,
-    color: colors.neutral.textPrimary,
-    lineHeight: typography.body.lineHeight,
-  },
-  choiceStatusIcon: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: colors.semantic.correct.text,
-  },
-  choiceStatusIconIncorrect: {
-    color: colors.semantic.incorrect.text,
+    padding: spacing.base,
   },
   progressTrack: {
     width: '100%',
+    backgroundColor: colors.neutral.borderSubtle,
     borderRadius: radius.pill,
     overflow: 'hidden',
   },
   progressFill: {
-    width: '100%',
     borderRadius: radius.pill,
-    transformOrigin: 'left',
+  },
+  choiceRowBase: {
+    minHeight: 58, // 56-64pt recommended iPhone 16 answer option height
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.base,
+    paddingVertical: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  choiceRowPressed: {
+    opacity: motion.opacity.pressed,
+    transform: [{ scale: motion.scale.pressed }],
+  },
+  choiceKeyBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: radius.sm,
+    borderWidth: borders.hairline,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  choiceKeyText: {
+    fontSize: typography.subheadline.fontSize,
+    fontWeight: '700',
+  },
+  choiceTextWrapper: {
+    flex: 1,
+    gap: 2,
+  },
+  choiceText: {
+    fontSize: typography.body.fontSize,
+    lineHeight: typography.body.lineHeight,
+    color: colors.neutral.textPrimary,
+  },
+  choiceTextEmphasized: {
+    fontWeight: '600',
+  },
+  choiceStatusCaption: {
+    fontSize: typography.caption.fontSize,
+    fontWeight: '600',
+    marginTop: 2,
+  },
+  subjectRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.base,
+    paddingHorizontal: spacing.base,
+    backgroundColor: colors.neutral.surfaceElevated,
+    minHeight: 68,
+    gap: spacing.md,
+  },
+  subjectRowDivider: {
+    borderBottomWidth: borders.hairline,
+    borderBottomColor: colors.neutral.divider,
+  },
+  subjectRowPressed: {
+    backgroundColor: colors.neutral.surfaceMuted,
+  },
+  subjectRowMain: {
+    flex: 1,
+    gap: spacing.xs,
+  },
+  subjectRowTitleLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
+  subjectRowTitle: {
+    flex: 1,
+    fontSize: typography.body.fontSize,
+    fontWeight: '600',
+    color: colors.neutral.textPrimary,
+  },
+  subjectRowMeta: {
+    fontSize: typography.footnote.fontSize,
+    color: colors.neutral.textSecondary,
+  },
+  subjectRowProgress: {
+    marginTop: 2,
+  },
+  subjectRowChevron: {
+    fontSize: 22,
+    fontWeight: '500',
+    color: colors.neutral.textMuted,
+  },
+  flashcardSurface: {
+    backgroundColor: colors.neutral.surfaceElevated,
+    borderRadius: radius.lg,
+    borderWidth: borders.hairline,
+    borderColor: colors.neutral.borderSubtle,
+    padding: spacing.xxl,
+    minHeight: 260,
+    justifyContent: 'space-between',
+    gap: spacing.xl,
+  },
+  flashcardMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  flashcardOverline: {
+    fontSize: typography.footnote.fontSize,
+    fontWeight: '600',
+    color: colors.brand.primary,
+    letterSpacing: 0.6,
+  },
+  flashcardPromptText: {
+    fontSize: typography.title2.fontSize,
+    lineHeight: 30,
+    fontWeight: '600',
+    color: colors.neutral.textPrimary,
+  },
+  flashcardHintBox: {
+    paddingTop: spacing.base,
+    borderTopWidth: borders.hairline,
+    borderTopColor: colors.neutral.divider,
+    alignItems: 'center',
+  },
+  flashcardHintText: {
+    fontSize: typography.subheadline.fontSize,
+    fontWeight: '600',
+    color: colors.brand.primary,
+  },
+  flashcardBackSection: {
+    gap: spacing.sm,
+  },
+  flashcardAnswerLabel: {
+    fontSize: typography.caption.fontSize,
+    fontWeight: '700',
+    color: colors.semantic.correct.text,
+    letterSpacing: 0.5,
+  },
+  flashcardAnswerText: {
+    fontSize: typography.headline.fontSize,
+    lineHeight: typography.headline.lineHeight,
+    fontWeight: '700',
+    color: colors.neutral.textPrimary,
+  },
+  flashcardExplanationBox: {
+    marginTop: spacing.xs,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: colors.neutral.surface,
+    gap: spacing.xs,
+  },
+  flashcardExplanationLabel: {
+    fontSize: typography.footnote.fontSize,
+    fontWeight: '600',
+    color: colors.neutral.textSecondary,
+  },
+  flashcardExplanationText: {
+    fontSize: typography.body.fontSize,
+    lineHeight: typography.body.lineHeight,
+    color: colors.neutral.textPrimary,
+  },
+  divider: {
+    height: borders.hairline,
+    backgroundColor: colors.neutral.divider,
+    marginVertical: spacing.xs,
+  },
+  feedbackBanner: {
+    padding: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: borders.hairline,
+  },
+  feedbackCorrect: {
+    backgroundColor: colors.semantic.correct.surface,
+    borderColor: colors.semantic.correct.border,
+  },
+  feedbackPartial: {
+    backgroundColor: colors.semantic.warning.surface,
+    borderColor: colors.semantic.warning.border,
+  },
+  feedbackIncorrect: {
+    backgroundColor: colors.semantic.incorrect.surface,
+    borderColor: colors.semantic.incorrect.border,
+  },
+  feedbackTitle: {
+    fontSize: typography.body.fontSize,
+    fontWeight: '600',
+  },
+  emptyStateBox: {
+    padding: spacing.xxl,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.neutral.surfaceElevated,
+    borderRadius: radius.lg,
+    borderWidth: borders.hairline,
+    borderColor: colors.neutral.borderSubtle,
+    gap: spacing.sm,
+  },
+  emptyStateTitle: {
+    fontSize: typography.headline.fontSize,
+    fontWeight: '600',
+    color: colors.neutral.textPrimary,
+    textAlign: 'center',
+  },
+  emptyStateMessage: {
+    fontSize: typography.subheadline.fontSize,
+    color: colors.neutral.textSecondary,
+    textAlign: 'center',
+  },
+  emptyStateButton: {
+    marginTop: spacing.sm,
   },
 });
+
