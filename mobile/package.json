@@ -5,18 +5,21 @@
   "type": "module",
   "scripts": {
     "start": "expo start",
-    "expo": "expo",
-    "ios": "expo start --ios",
     "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "node --test dist/tests/**/*.test.js"
   },
+  "dependencies": {
+    "expo": "~58.0.14",
+    "react": "^19.3.1",
+    "react-native": "^0.88.0"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/react": "^19.3.0",
-    "react": "^19.3.1",
-    "react-native": "^0.88.0",
     "typescript": "^5.6.0"
   }
 }
