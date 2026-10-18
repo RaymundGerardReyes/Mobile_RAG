@@ -34,7 +34,7 @@ def is_answer_key_item_line(line_str: str, item_patterns: list[str]) -> bool:
         return False
 
     # 1. Matches single letter answer key item standalone: e.g. '1. A', '1 - A', '1: A', '1 A', '1. A.'
-    if re.match(r"^\s*\d{1,4}\s*[-–—.:]?\s*[A-Da-d]\s*[.)]?\s*$", clean):
+    if re.match(r"^\s*\d{1,4}\s*[-–—.:]?\s*[A-Ea-e]\s*[.)]?\s*$", clean):
         return True
 
     # 2. Matches multiple answer key items on the same line: e.g. '1. A  2. B  3. C' or '1 - A  2 - B'
@@ -141,7 +141,7 @@ def parse_answer_keys(
                             ans_val = text_ans_match.group(2).strip()
                             if ans_val:
                                 found_in_line = True
-                                if len(ans_val) == 1 and ans_val.upper() in "ABCD":
+                                if len(ans_val) == 1 and ans_val.upper() in "ABCDE":
                                     ans_val = ans_val.upper()
                                 chapter_keys[(chapter, q_num)] = (ans_val, page_num)
                                 global_keys.append((q_num, ans_val, page_num))
@@ -188,6 +188,7 @@ def parse_questions_from_pages(
     current_q: dict[str, Any] | None = None
     current_choice: dict[str, str] | None = None
     in_answer_key = False
+    in_explanation = False
 
     chapter_header_re = re.compile(
         r"^(?:CHAPTER|Chapter|KABANATA|Kabanata|PART|Part|BAHAGI|Bahagi)\s+",
@@ -206,13 +207,55 @@ def parse_questions_from_pages(
             if not line_str:
                 continue
 
+            # Check if line is an explicit chapter/section heading or directions directive
+            is_heading_or_directive = bool(
+                chapter_header_re.match(line_str)
+                or re.match(
+                    r"^\s*(?:Directions|Panuto|\d+\.\s+(?:Context\s+Clues|Vocabulary)|(?:Context\s+Clues|Vocabulary)\s*-\s*(?:Synonyms|Antonyms))",
+                    line_str,
+                    re.IGNORECASE,
+                )
+            )
+            if is_heading_or_directive:
+                if current_q:
+                    raw_questions.append(current_q)
+                    current_q = None
+                    current_choice = None
+                    in_explanation = False
+                continue
+
             # If line is a choice or question stem, it cannot be an answer key header
             is_choice = any(re.match(c_pat, line_str) for c_pat in c_patterns)
             is_question = any(re.match(q_pat, line_str) for q_pat in q_patterns)
 
+            # Check for inline explanation block (e.g. "Explanation: Choice (b) ... is correct")
+            exp_match = re.match(r"^(?:Explanation|Paliwanag|Rason)\s*[:\-]\s*(.*)$", line_str, re.IGNORECASE)
+            if exp_match:
+                if current_q:
+                    current_choice = None
+                    in_explanation = True
+                    exp_body = exp_match.group(1).strip()
+                    if exp_body:
+                        current_q["explanation_lines"].append(exp_body)
+                    choice_key_m = re.search(r"(?:Choice|Option|Titik)\s*\(([A-Ea-e])\)", line_str, re.IGNORECASE)
+                    if choice_key_m:
+                        current_q["inline_canonical_choice_key"] = choice_key_m.group(1).upper()
+                continue
+
+            if in_explanation and current_q:
+                # If a new question starts, exit explanation mode
+                if is_question:
+                    in_explanation = False
+                    # Fall through to question stem parsing below
+                else:
+                    # Accumulate explanation continuation lines
+                    current_q["explanation_lines"].append(line_str)
+                    continue
+
             # Check if answer key starts — questions stop here
             is_ak_header = (not is_choice and not is_question) and any(
                 re.search(h_pat, line_str, re.IGNORECASE) for h_pat in header_patterns
+                if not re.search(r"explanation\s*:", h_pat, re.IGNORECASE)
             )
             if is_ak_header:
                 in_answer_key = True
@@ -220,6 +263,7 @@ def parse_questions_from_pages(
                     raw_questions.append(current_q)
                     current_q = None
                     current_choice = None
+                    in_explanation = False
                 continue
 
             # If inside answer key, check if a new chapter or question restarts normal text
@@ -263,15 +307,18 @@ def parse_questions_from_pages(
                         "stem_lines": [stem_text] if stem_text else [],
                         "choices": [],
                         "inline_answer": None,
+                        "inline_canonical_choice_key": None,
+                        "explanation_lines": [],
                     }
                     current_choice = None
+                    in_explanation = False
                     matched_q = True
                     break
 
             if matched_q:
                 continue
 
-            # Check for choices (A., B., C., D.) if inside a question
+            # Check for choices (A., B., C., D., E.) if inside a question
             if current_q:
                 # Check for inline answer pattern (e.g. "Answer: A" or "Sagot: Republic Act 6713")
                 inline_match = re.match(
@@ -450,14 +497,28 @@ def link_qa_pairs(
         if matched_key:
             used_keys.add(matched_key)
 
+        inline_canonical_choice_key = rq.get("inline_canonical_choice_key")
+        raw_explanation_lines = rq.get("explanation_lines", [])
+        canonical_explanation = " ".join(raw_explanation_lines).strip() or None
+
         if q_type == "multiple_choice":
             num_choices = len(choices) if choices else 0
-            if num_choices != 4:
+            if num_choices not in (4, 5):
                 msg = f"{q_id} (Item {raw_num}) has {num_choices} choices (expected 4)"
                 item_warnings.append(msg)
                 warnings.append(msg)
 
-            if canonical_choice_key and len(canonical_choice_key) == 1 and canonical_choice_key.upper() in ["A", "B", "C", "D"]:
+            if inline_canonical_choice_key:
+                canonical_choice_key = inline_canonical_choice_key
+                matched_text = ""
+                for c in choices or []:
+                    if c["key"] == canonical_choice_key:
+                        matched_text = c["text"]
+                        break
+                canonical_answer = matched_text or canonical_choice_key
+                confidence = "verified"
+                answer_key_page = page_num
+            elif canonical_choice_key and len(canonical_choice_key) == 1 and canonical_choice_key.upper() in ["A", "B", "C", "D", "E"]:
                 canonical_choice_key = canonical_choice_key.upper()
                 matched_text = ""
                 for c in choices or []:
@@ -469,7 +530,7 @@ def link_qa_pairs(
             elif inline_answer:
                 canonical_answer = inline_answer
                 # Check if inline answer is a single choice letter
-                if len(inline_answer) == 1 and inline_answer.upper() in ["A", "B", "C", "D"]:
+                if len(inline_answer) == 1 and inline_answer.upper() in ["A", "B", "C", "D", "E"]:
                     canonical_choice_key = inline_answer.upper()
                 confidence = "high"
             else:
@@ -512,7 +573,7 @@ def link_qa_pairs(
             "choices": choices,
             "canonical_answer": canonical_answer,
             "canonical_choice_key": canonical_choice_key,
-            "canonical_explanation": None,
+            "canonical_explanation": canonical_explanation,
             "source_page": page_num,
             "answer_key_page": answer_key_page,
             "difficulty": None,

@@ -10,8 +10,10 @@ extract_textbook:
     - '^(?:PART|Part|BAHAGI|Bahagi)\s+[\dIVXLCDM]+[.:]?\s*(.*)'
     - '^(?:ENGLISH|MATH|FILIPINO|GENERAL\s+(?:INFORMATION|LAWS?)|CLERICAL\s+OPERATIONS)'
     - '^(?:NUMERICAL\s+ABILITY|VERBAL\s+ABILITY|ANALYTICAL\s+ABILITY)'
+    - '^(?:(?:\d+\.\s+)?(?:Context\s+Clues|Vocabulary)|VERBAL\s+ABILITY|ENGLISH)'
   section_heading_patterns:
     - '^(?:Section|Seksyon)(?:\s+[\dIVXLCDM]+)?[.:]?\s*(.*)'
+    - '^(?:Context\s+Clues|Vocabulary)\s*-\s*(?:Synonyms|Antonyms)'
     - '^(?:Vocabulary|Grammar|Reading Comprehension|Analogy|Logic|Word Problems)'
     - '^(?:Balarila|Talasalitaan|Pagbasa|Saligang Batas|R\.A\.\s*6713)'
 
@@ -25,14 +27,14 @@ link_qa_pairs:
     - '^\s*Question\s+(\d{1,4})[.:]\s*(.*)'
     - '^\s*Tanong\s+(\d{1,4})[.:]\s*(.*)'
   choice_patterns:
-    - '^\s*([A-Da-d])[.)]\s+(.*)'
-    - '^\s*\[([A-Da-d])\]\s*(.*)'
+    - '^\s*([A-Ea-e])[.)]\s+(.*)'
+    - '^\s*\[([A-Ea-e])\]\s*(.*)'
   answer_key_header_patterns:
-    - '(?i)(?:answer\s+key|susi\s+sa\s+pagwawasto|mga\s+tamang\s+sagot|correct\s+answers)'
+    - '(?i)(?:explanation\s*:|answer\s+key|susi\s+sa\s+pagwawasto|mga\s+tamang\s+sagot|correct\s+answers)'
   answer_key_item_patterns:
-    - '(\d{1,4})\s*[-–—:]\s*([A-Da-d])\b'
-    - '(\d{1,4})[.)]\s*([A-Da-d])\b'
-    - '(\d{1,4})\s+([A-Da-d])\b'
+    - '(\d{1,4})\s*[-–—:]\s*([A-Ea-e])\b'
+    - '(\d{1,4})[.)]\s*([A-Ea-e])\b'
+    - '(\d{1,4})\s+([A-Ea-e])\b'
 
 build_passages:
   input_path: "artifacts/extracted_pages.jsonl"

@@ -320,9 +320,37 @@ Section: Principles of Merit and Fitness
 
 ---
 
+### 5.7 Problem Type 7: 5-Choice Multiple Choice with Inline Pedagogical Explanations
+
+**Use For:** English Vocabulary, Synonyms, Antonyms, Context Clues, and General Information.
+
+#### Formatting Rules:
+1. Provide 5 choices (`a.` through `e.` or `A.` through `E.`) on separate lines.
+2. Directly beneath the choices, include an `Explanation:` or `Paliwanag:` block.
+3. The explanation **must** state the correct letter in parentheses (e.g. `Choice (a) "..." is correct because...`), followed by pedagogical refutations of incorrect distractors.
+4. The Stage 2 parser automatically extracts both the verified canonical answer and the full explanation without requiring a separate end-of-chapter answer key.
+
+#### Document Template:
+```text
+Context Clues - Synonyms
+Directions: Choose the letter corresponding to the word which has the CLOSEST meaning with the underlined word.
+
+1. The Vice-President's act was absolutely treacherous for the Filipinos.
+a. betrayal
+b. hazardous
+c. harmless
+d. commendable
+e. secured
+Explanation: Choice (a) "betrayal" is correct because "treacherous" means guilty of or involving betrayal or deception. Choice (b) "hazardous" is incorrect because it means risky or dangerous, which refers to physical safety rather than disloyalty. Choice (c) "harmless" is incorrect as it is an antonym meaning incapable of causing harm. Choice (d) "commendable" is incorrect as it means deserving praise, which contradicts the negative connotation of treacherous. Choice (e) "secured" is incorrect because it means fixed or protected, which has no lexical overlap with deceit or betrayal.
+```
+
+---
+
 ## 6. Answer Key & Explanation Layout Grammar
 
-The Stage 2 parser ([`link_qa_pairs.py`](file:///d:/MobileApp%20Rag/training/src/ai_tutor_training/stages/link_qa_pairs.py)) executes a **Two-Pass State Machine**. Pass 1 scans the document for Answer Key blocks and records canonical answers and explanations.
+The Stage 2 parser ([`link_qa_pairs.py`](file:///d:/MobileApp%20Rag/training/src/ai_tutor_training/stages/link_qa_pairs.py)) supports two flexible ingestion models:
+- **Model A (Inline Explanations)**: Explanations immediately follow each question's choices (`Explanation: Choice (X)...`).
+- **Model B (End-of-Chapter Answer Keys)**: Dedicated answer key tables placed at the end of each chapter or section.
 
 ### 6.1 Answer Key Section Headers
 Place answer keys at the end of each chapter or section. Use one of these recognized headers:
