@@ -8,6 +8,7 @@ export interface ExplainMoreRequest {
   questionId: string;
   language?: 'en' | 'fil';
   signal?: AbortSignal;
+  onChunk?: (chunk: string) => void;
 }
 
 export interface ExplainMoreResponse {
@@ -86,6 +87,7 @@ export class ExplainMore {
       )) {
         fullExplanation += chunk.text;
         tokenCount++;
+        request.onChunk?.(chunk.text);
       }
 
       const durationMs = Date.now() - startTime;

@@ -412,4 +412,139 @@ describe('ReviewSessionController & SQLite Migration Safeguard', () => {
     );
     assert.equal(newRow?.score, 1.0);
   });
+
+  it('9. rateCurrentFlashcard: rating "again" records 0.0 attempt, re-queues missed card, and rating "know" records 1.0', async () => {
+    await controller.startSession({ query: { mode: 'all' } });
+
+    // Initial state: totalQuestions = 2, currentIndex = 0 (q1)
+    assert.equal(controller.getState().totalQuestions, 2);
+    assert.equal(controller.getState().currentIndex, 0);
+    assert.equal(controller.getState().currentQuestion?.id, 'q1');
+
+    // Rate 'again' on q1 (missed card)
+    const resultAgain = await controller.rateCurrentFlashcard('again');
+    assert.notEqual(resultAgain, null);
+    assert.equal(resultAgain?.isCorrect, false);
+    assert.equal(resultAgain?.score, 0.0);
+
+    // Controller should have re-queued q1 at the end and advanced to q2
+    const stateAfterAgain = controller.getState();
+    assert.equal(stateAfterAgain.totalQuestions, 3);
+    assert.equal(stateAfterAgain.currentIndex, 1);
+    assert.equal(stateAfterAgain.currentQuestion?.id, 'q2');
+    assert.equal(stateAfterAgain.questions.length, 3);
+    assert.equal(stateAfterAgain.questions[2].id, 'q1');
+
+    // Rate 'know' on q2
+    const resultKnow = await controller.rateCurrentFlashcard('know');
+    assert.notEqual(resultKnow, null);
+    assert.equal(resultKnow?.isCorrect, true);
+    assert.equal(resultKnow?.score, 1.0);
+
+    // Should advance to index 2 (the re-queued q1)
+    const stateAfterQ2 = controller.getState();
+    assert.equal(stateAfterQ2.currentIndex, 2);
+    assert.equal(stateAfterQ2.currentQuestion?.id, 'q1');
+    assert.equal(stateAfterQ2.isSessionCompleted, false);
+
+    // Rate 'know' on re-queued q1
+    await controller.rateCurrentFlashcard('know');
+    assert.equal(controller.getState().isSessionCompleted, true);
+  });
+
+  it('10. streamingAiText: receives streamed chunks during requestExplainMore', async () => {
+    mockAdapter.setOptions({
+      chunkDelayMs: 10,
+      responses: ['Ang Civil Service Commission ay ang sentral na ahensya ng gobyerno.'],
+    });
+
+    await controller.startSession({ query: { mode: 'all' } });
+    await controller.submitCurrentAnswer();
+
+    const streamedChunks: string[] = [];
+    controller.subscribe((state) => {
+      if (state.streamingAiText) {
+        streamedChunks.push(state.streamingAiText);
+      }
+    });
+
+    await controller.requestExplainMore('fil');
+
+    assert.ok(streamedChunks.length > 1, 'Should have received multiple intermediate streaming updates');
+    assert.equal(
+      controller.getState().streamingAiText,
+      'Ang Civil Service Commission ay ang sentral na ahensya ng gobyerno.'
+    );
+  });
+
+  it('11. rateCurrentFlashcard: prevents concurrent rating execution (rapid multiple presses)', async () => {
+    await controller.startSession({ query: { mode: 'all' } });
+
+    assert.equal(controller.getState().currentIndex, 0);
+    assert.equal(controller.getState().totalQuestions, 2);
+
+    // Simulate rapid concurrent taps on "Review Again"
+    const [res1, res2] = await Promise.all([
+      controller.rateCurrentFlashcard('again'),
+      controller.rateCurrentFlashcard('again'),
+    ]);
+
+    // One must succeed and the other must be rejected by the concurrency guard
+    const results = [res1, res2];
+    const successes = results.filter((r) => r !== null);
+    const rejections = results.filter((r) => r === null);
+
+    assert.equal(successes.length, 1, 'Only one rating call should be accepted');
+    assert.equal(rejections.length, 1, 'Concurrent rating call should be rejected');
+
+    // Queue must only have grown by 1 (totalQuestions 3, currentIndex 1)
+    const state = controller.getState();
+    assert.equal(state.totalQuestions, 3);
+    assert.equal(state.currentIndex, 1);
+    assert.equal(state.currentQuestion?.id, 'q2');
+  });
+
+  it('12. rateCurrentFlashcard: safely handles question when choices are limited without foreign key errors', async () => {
+    // Add question with only 1 choice (which is the canonical choice)
+    await importer.importPack({
+      metadata: {
+        pack_id: 'ph-civil-service',
+        version: '2026.10.1',
+        source_revision: 'main',
+        imported_at: new Date().toISOString(),
+        content_hash: 'hash-pack',
+      },
+      topics: [{ id: 't1', title: 'Constitutional Law', sort_order: 1 }],
+      passages: [],
+      questions: [
+        {
+          id: 'q_single',
+          topic_id: 't1',
+          question_type: 'multiple_choice',
+          stem: 'Single choice question',
+          source_page: 25,
+          content_version: '2026.10.1',
+        },
+      ],
+      choices: [
+        { id: 'c_only', question_id: 'q_single', choice_key: 'A', text: 'Sole option', sort_order: 1 },
+      ],
+      question_answers: [
+        { question_id: 'q_single', canonical_choice_id: 'c_only' },
+      ],
+      question_passages: [],
+    });
+
+    await controller.startSession({ query: { mode: 'all' } });
+    // Navigate to q_single (which is index 2)
+    controller.nextQuestion();
+    controller.nextQuestion();
+    assert.equal(controller.getState().currentQuestion?.id, 'q_single');
+
+    // Rating 'again' where no non-canonical choice exists must NOT throw foreign key violation
+    const result = await controller.rateCurrentFlashcard('again');
+    assert.notEqual(result, null);
+    assert.equal(result?.isCorrect, false);
+    assert.equal(result?.score, 0.0);
+  });
 });

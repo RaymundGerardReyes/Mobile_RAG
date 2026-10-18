@@ -123,37 +123,40 @@ export class SqliteQuestionRepository implements QuestionRepository {
   }
 
   public async getTopicSummaries(): Promise<TopicSummary[]> {
-    const topics = await this.db.query<Topic>(
-      'SELECT id, title, sort_order as sortOrder FROM topics ORDER BY sort_order ASC'
-    );
-
-    const summaries: TopicSummary[] = [];
-
-    for (const topic of topics) {
-      const stats = await this.db.queryOne<{ total: number; answered: number; correct: number }>(
-        `SELECT
-          COUNT(DISTINCT q.id) as total,
-          COUNT(DISTINCT a.question_id) as answered,
-          COUNT(DISTINCT CASE WHEN a.is_correct = 1 THEN a.question_id END) as correct
-         FROM questions q
-         LEFT JOIN answer_attempts a ON q.id = a.question_id
-         WHERE q.topic_id = ?`,
-        [topic.id]
-      );
-
-      summaries.push({
-        topic: {
-          id: topic.id,
-          title: topic.title,
-          sortOrder: topic.sortOrder,
-        },
-        totalQuestions: stats?.total ?? 0,
-        answeredCount: stats?.answered ?? 0,
-        correctCount: stats?.correct ?? 0,
-      });
+    interface TopicSummaryRow {
+      id: string;
+      title: string;
+      sortOrder: number;
+      total: number;
+      answered: number;
+      correct: number;
     }
 
-    return summaries;
+    const rows = await this.db.query<TopicSummaryRow>(
+      `SELECT
+        t.id,
+        t.title,
+        t.sort_order as sortOrder,
+        COUNT(DISTINCT q.id) as total,
+        COUNT(DISTINCT a.question_id) as answered,
+        COUNT(DISTINCT CASE WHEN a.is_correct = 1 THEN a.question_id END) as correct
+       FROM topics t
+       LEFT JOIN questions q ON t.id = q.topic_id
+       LEFT JOIN answer_attempts a ON q.id = a.question_id
+       GROUP BY t.id, t.title, t.sort_order
+       ORDER BY t.sort_order ASC`
+    );
+
+    return rows.map((r) => ({
+      topic: {
+        id: r.id,
+        title: r.title,
+        sortOrder: r.sortOrder,
+      },
+      totalQuestions: r.total ?? 0,
+      answeredCount: r.answered ?? 0,
+      correctCount: r.correct ?? 0,
+    }));
   }
 
   private async getChoicesForQuestion(questionId: string): Promise<Choice[]> {

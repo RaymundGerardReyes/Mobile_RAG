@@ -72,6 +72,7 @@ export class ReviewSessionController {
   private state: ReviewSessionState;
   private listeners: Set<ReviewSessionListener> = new Set();
   private activeAbortController: AbortController | null = null;
+  private isRatingFlashcard = false;
 
   constructor(dependencies: ReviewSessionDependencies) {
     this.deps = dependencies;
@@ -239,10 +240,15 @@ export class ReviewSessionController {
       this.activeAbortController = new AbortController();
       this.updateState({ isGeneratingAi: true, aiError: null, streamingAiText: '' });
 
+      let streamed = '';
       const result = await this.deps.explainMore.execute({
         questionId: this.state.currentQuestion.id,
         language,
         signal: this.activeAbortController.signal,
+        onChunk: (chunk: string) => {
+          streamed += chunk;
+          this.updateState({ streamingAiText: streamed });
+        },
       });
 
       const updatedPages = Array.from(
@@ -328,6 +334,83 @@ export class ReviewSessionController {
       return aborted;
     }
     return false;
+  }
+
+  /**
+   * Rates the current flashcard ('again' | 'know') during active-recall review.
+   * Records a 0.0 or 1.0 attempt and re-queues missed cards to the end of the session.
+   */
+  public async rateCurrentFlashcard(rating: 'again' | 'know'): Promise<SubmitAnswerResponse | null> {
+    if (this.isRatingFlashcard) {
+      return null;
+    }
+    const currentQ = this.state.currentQuestion;
+    if (!currentQ) {
+      return null;
+    }
+
+    this.isRatingFlashcard = true;
+    try {
+      this.cancelActiveAiGeneration();
+
+      const isKnow = rating === 'know';
+      const durationMs = Math.max(1, Date.now() - this.state.questionStartTimeMs);
+      const activeSessionId = this.state.sessionId;
+
+      let selectedChoiceId: string | undefined = undefined;
+      let freeTextAnswer: string | undefined = undefined;
+
+      if (currentQ.questionType === 'multiple_choice') {
+        let canonicalChoiceId = currentQ.canonicalChoiceId || null;
+        if (!canonicalChoiceId && currentQ.canonicalAnswer) {
+          const normCanonical = currentQ.canonicalAnswer.trim().toLowerCase();
+          const matchedChoice = currentQ.choices.find(
+            (c) =>
+              c.choiceKey.trim().toLowerCase() === normCanonical ||
+              c.text.trim().toLowerCase() === normCanonical ||
+              c.id === currentQ.canonicalAnswer
+          );
+          if (matchedChoice) {
+            canonicalChoiceId = matchedChoice.id;
+          }
+        }
+
+        if (isKnow) {
+          selectedChoiceId = canonicalChoiceId || currentQ.choices[0]?.id;
+        } else {
+          // If rating 'again', pick a non-canonical choice if available. If none exist,
+          // leave undefined so NULL is recorded in SQLite (satisfying foreign keys) with score 0.0.
+          const nonCanonical = currentQ.choices.find((c) => c.id !== canonicalChoiceId);
+          selectedChoiceId = nonCanonical?.id ?? undefined;
+        }
+      } else {
+        freeTextAnswer = isKnow ? (currentQ.canonicalAnswer || 'know') : '';
+      }
+
+      const result = await this.deps.submitAnswer.execute({
+        questionId: currentQ.id,
+        selectedChoiceId,
+        freeTextAnswer,
+        sessionId: activeSessionId,
+        durationMs,
+      });
+
+      // If rated 'again', re-queue the question at the end of the current questions array immutably
+      if (rating === 'again') {
+        const updatedQuestions = [...this.state.questions, currentQ];
+        this.updateState({
+          questions: updatedQuestions,
+          totalQuestions: updatedQuestions.length,
+        });
+      }
+
+      // Now advance to the next card
+      this.nextQuestion();
+
+      return result;
+    } finally {
+      this.isRatingFlashcard = false;
+    }
   }
 
   /**

@@ -149,6 +149,7 @@ export const controls = {
   minTouchTarget: 44,
   minimumTouchTarget: 44,
   buttonHeight: 50,
+  choiceRowMinHeight: 58,
   iconSmall: 16,
   iconMedium: 24,
   iconLarge: 32,

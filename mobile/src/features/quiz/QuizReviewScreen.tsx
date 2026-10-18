@@ -21,6 +21,7 @@ import {
   BottomActionBar,
   CSCButton,
   CSCChipBadge,
+  EvidenceCard,
   Flashcard,
   ScreenContainer,
   ScreenHeader,
@@ -61,6 +62,7 @@ export interface QuizReviewScreenProps {
   onRequestInterpretFreeAnswer?: () => void;
   onCancelGeneration: () => void;
   onNextQuestion: () => void;
+  onRateCard?: (rating: 'again' | 'know') => void;
   onRestartSession?: () => void;
   onReturnHome?: () => void;
 }
@@ -94,15 +96,18 @@ export function QuizReviewScreen({
   onRequestInterpretFreeAnswer,
   onCancelGeneration,
   onNextQuestion,
+  onRateCard,
   onRestartSession,
   onReturnHome,
 }: QuizReviewScreenProps) {
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [isFlashcardRevealed, setIsFlashcardRevealed] = useState(false);
+  const [isRatingCard, setIsRatingCard] = useState(false);
 
   // Reset flashcard reveal state when advancing to a new question
   useEffect(() => {
     setIsFlashcardRevealed(false);
+    setIsRatingCard(false);
   }, [question?.id, questionNumber]);
 
   // 1. Session Completed Summary View (No decorative emojis or fake charts)
@@ -191,7 +196,7 @@ export function QuizReviewScreen({
     (typeof aiExplanation === 'string'
       ? aiExplanation
       : aiExplanation?.explanation || null) ||
-    (isGeneratingAi && streamingAiText ? streamingAiText : null);
+    (streamingAiText ? streamingAiText : null);
 
   const canonicalAnswerDisplay =
     question.choices.find((c) => c.id === question.canonicalChoiceId)?.text ||
@@ -231,13 +236,39 @@ export function QuizReviewScreen({
                 <CSCButton
                   title="Review Again"
                   variant="secondary"
-                  onPress={onNextQuestion}
+                  disabled={isRatingCard}
+                  onPress={async () => {
+                    setIsRatingCard(true);
+                    setIsFlashcardRevealed(false);
+                    try {
+                      if (onRateCard) {
+                        await onRateCard('again');
+                      } else {
+                        onNextQuestion();
+                      }
+                    } finally {
+                      setIsRatingCard(false);
+                    }
+                  }}
                   style={styles.flexButton}
                 />
                 <CSCButton
                   title="Know It"
                   variant="primary"
-                  onPress={onNextQuestion}
+                  disabled={isRatingCard}
+                  onPress={async () => {
+                    setIsRatingCard(true);
+                    setIsFlashcardRevealed(false);
+                    try {
+                      if (onRateCard) {
+                        await onRateCard('know');
+                      } else {
+                        onNextQuestion();
+                      }
+                    } finally {
+                      setIsRatingCard(false);
+                    }
+                  }}
                   style={styles.flexButton}
                 />
               </View>
@@ -251,13 +282,13 @@ export function QuizReviewScreen({
           height={4}
         />
         <Flashcard
-          topicLabel={question.topicId.replace(/-/g, ' ')}
-          frontPrompt={question.stem}
-          backAnswer={canonicalAnswerDisplay}
-          explanation={question.canonicalExplanation}
+          topicTitle={question.topicId.replace(/-/g, ' ')}
+          questionStem={question.stem}
+          canonicalAnswer={canonicalAnswerDisplay}
+          canonicalExplanation={question.canonicalExplanation}
           sourcePage={question.sourcePage}
           revealed={isFlashcardRevealed}
-          onReveal={() => setIsFlashcardRevealed(true)}
+          onToggleReveal={() => setIsFlashcardRevealed(!isFlashcardRevealed)}
         />
       </ScreenContainer>
     );
@@ -404,23 +435,12 @@ export function QuizReviewScreen({
           {supportingPassages.length > 0 && (
             <View style={styles.passagesContainer}>
               <Text style={styles.metadataHeading}>
-                VERIFIED TEXTBOOK REFERENCE (PP. {sourcePages.join(', ')})
+                {sourcePages.length > 0
+                  ? `VERIFIED TEXTBOOK REFERENCE (PP. ${sourcePages.join(', ')})`
+                  : 'VERIFIED TEXTBOOK REFERENCE'}
               </Text>
               {supportingPassages.map((item) => (
-                <View key={item.passage.id} style={styles.passageItem}>
-                  <Text style={styles.passageBody}>{item.passage.text}</Text>
-                  <Text style={styles.passageMeta}>
-                    {item.passage.chapter}
-                    {item.passage.section
-                      ? ` · ${item.passage.section}`
-                      : ''} · pp. {item.passage.startPage}–{item.passage.endPage}{' '}
-                    (
-                    {item.strategy === 'linked'
-                      ? 'Verified Link'
-                      : 'FTS5 Search'}
-                    )
-                  </Text>
-                </View>
+                <EvidenceCard key={item.passage.id} retrievedPassage={item} />
               ))}
             </View>
           )}
@@ -641,6 +661,7 @@ export function ConnectedQuizReviewScreen({
       }
       onCancelGeneration={() => controller.cancelActiveAiGeneration()}
       onNextQuestion={() => controller.nextQuestion()}
+      onRateCard={(rating) => controller.rateCurrentFlashcard(rating)}
       onRestartSession={onRestartSession}
       onReturnHome={onReturnHome}
     />

@@ -1,5 +1,8 @@
-import React, { useEffect, useRef } from 'react';
+// File: src/components/CorePrimitives.tsx
+
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  AccessibilityInfo,
   ActivityIndicator,
   Animated,
   KeyboardAvoidingView,
@@ -23,6 +26,39 @@ import {
   spacing,
   typography,
 } from '../theme/tokens.js';
+import { RetrievedPassage } from '../application/ports/passage_retriever.js';
+import { TopicSummary } from '../application/ports/question_repository.js';
+
+/**
+ * Hook that checks iOS / OS Reduce Motion accessibility preference.
+ * When enabled, animations step immediately without delay or spring physics.
+ */
+export function useReducedMotion(): boolean {
+  const [reduceMotion, setReduceMotion] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    AccessibilityInfo.isReduceMotionEnabled()
+      .then((enabled) => {
+        if (isMounted) setReduceMotion(Boolean(enabled));
+      })
+      .catch(() => {});
+
+    const subscription = AccessibilityInfo.addEventListener(
+      'reduceMotionChanged',
+      (enabled) => {
+        if (isMounted) setReduceMotion(Boolean(enabled));
+      }
+    );
+
+    return () => {
+      isMounted = false;
+      subscription.remove();
+    };
+  }, []);
+
+  return reduceMotion;
+}
 
 // ============================================================================
 // 1. LAYOUT PRIMITIVES (ScreenContainer, ScreenHeader, SectionHeader, BottomActionBar)
@@ -41,14 +77,14 @@ export interface ScreenContainerProps {
  * Safe-area-aware foundation for every screen on iPhone 16.
  * Enforces 20pt horizontal editorial padding and predictable scroll insets.
  */
-export function ScreenContainer({
+export const ScreenContainer: React.FC<ScreenContainerProps> = ({
   children,
   scrollable = true,
   footer,
   header,
   style,
   contentContainerStyle,
-}: ScreenContainerProps) {
+}) => {
   return (
     <SafeAreaView style={[styles.safeArea, style]}>
       <KeyboardAvoidingView
@@ -59,10 +95,7 @@ export function ScreenContainer({
         {scrollable ? (
           <ScrollView
             style={styles.flexOne}
-            contentContainerStyle={[
-              styles.scrollContent,
-              contentContainerStyle,
-            ]}
+            contentContainerStyle={[styles.scrollContent, contentContainerStyle]}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
@@ -77,7 +110,7 @@ export function ScreenContainer({
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
-}
+};
 
 export interface ScreenHeaderProps {
   title: string;
@@ -90,13 +123,13 @@ export interface ScreenHeaderProps {
 /**
  * Compact, native-feeling iOS navigation header.
  */
-export function ScreenHeader({
+export const ScreenHeader: React.FC<ScreenHeaderProps> = ({
   title,
   subtitle,
   onBack,
   backLabel = 'Home',
   rightElement,
-}: ScreenHeaderProps) {
+}) => {
   return (
     <View style={styles.screenHeader}>
       <View style={styles.screenHeaderLeft}>
@@ -131,7 +164,7 @@ export function ScreenHeader({
       ) : null}
     </View>
   );
-}
+};
 
 export interface SectionHeaderProps {
   title: string;
@@ -143,12 +176,12 @@ export interface SectionHeaderProps {
 /**
  * Editorial section header with optional secondary metadata or action.
  */
-export function SectionHeader({
+export const SectionHeader: React.FC<SectionHeaderProps> = ({
   title,
   actionLabel,
   onActionPress,
   rightText,
-}: SectionHeaderProps) {
+}) => {
   return (
     <View style={styles.sectionHeaderRow}>
       <Text style={styles.sectionHeaderText}>{title}</Text>
@@ -165,7 +198,7 @@ export function SectionHeader({
       ) : null}
     </View>
   );
-}
+};
 
 export interface BottomActionBarProps {
   children: React.ReactNode;
@@ -175,14 +208,20 @@ export interface BottomActionBarProps {
 /**
  * Persistent bottom action bar respecting thumb reach and iPhone safe areas.
  */
-export function BottomActionBar({ children, style }: BottomActionBarProps) {
-  return <View style={[styles.bottomActionBar, style]}>{children}</View>;
-}
+export const BottomActionBar: React.FC<BottomActionBarProps> = ({
+  children,
+  style,
+}) => {
+  return (
+    <View style={[styles.bottomActionBar, style]}>
+      <View style={styles.bottomActionInner}>{children}</View>
+    </View>
+  );
+};
 
 // ============================================================================
-// 2. CORE INTERACTIVE PRIMITIVES (CSCButton, CSCChipBadge, ContentCard, AnimatedProgressBar)
+// 2. CSCButton
 // ============================================================================
-
 export type CSCButtonVariant = 'primary' | 'secondary' | 'subtle';
 
 export interface CSCButtonProps {
@@ -191,67 +230,281 @@ export interface CSCButtonProps {
   variant?: CSCButtonVariant;
   disabled?: boolean;
   loading?: boolean;
+  accessibilityLabel?: string;
+  accessibilityHint?: string;
   style?: StyleProp<ViewStyle>;
   textStyle?: StyleProp<TextStyle>;
 }
 
-/**
- * Accessible iOS button with >= 50pt height and deterministic pressed/disabled states.
- */
-export function CSCButton({
+export const CSCButton: React.FC<CSCButtonProps> = ({
   title,
   onPress,
   variant = 'primary',
   disabled = false,
   loading = false,
+  accessibilityLabel,
+  accessibilityHint,
   style,
   textStyle,
-}: CSCButtonProps) {
+}) => {
+  const reduceMotion = useReducedMotion();
+  const scaleAnim = useRef(new Animated.Value(motion.scale.standard)).current;
   const isInteractive = !disabled && !loading;
 
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ disabled: !isInteractive, busy: loading }}
-      disabled={!isInteractive}
-      onPress={onPress}
-      style={({ pressed }) => [
+  const handlePressIn = () => {
+    if (!isInteractive || reduceMotion) return;
+    Animated.spring(scaleAnim, {
+      toValue: motion.scale.pressed,
+      stiffness: motion.spring.snappy.stiffness,
+      damping: motion.spring.snappy.damping,
+      mass: motion.spring.snappy.mass,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handlePressOut = () => {
+    if (!isInteractive || reduceMotion) return;
+    Animated.spring(scaleAnim, {
+      toValue: motion.scale.standard,
+      stiffness: motion.spring.snappy.stiffness,
+      damping: motion.spring.snappy.damping,
+      mass: motion.spring.snappy.mass,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const getContainerStyle = (pressed: boolean): StyleProp<ViewStyle> => {
+    if (disabled) {
+      return [styles.buttonBase, styles.buttonDisabled, style];
+    }
+    const pressedOpacity = pressed ? motion.opacity.pressed : motion.opacity.resting;
+    if (variant === 'secondary') {
+      return [
         styles.buttonBase,
-        variant === 'primary' && styles.buttonPrimary,
-        variant === 'secondary' && styles.buttonSecondary,
-        variant === 'subtle' && styles.buttonSubtle,
-        !isInteractive && styles.buttonDisabled,
-        pressed && isInteractive && styles.buttonPressed,
+        styles.buttonSecondary,
+        { opacity: pressedOpacity },
         style,
-      ]}
-    >
-      {loading ? (
-        <ActivityIndicator
-          size="small"
-          color={
-            variant === 'primary'
-              ? colors.brand.contrastText
-              : colors.brand.primary
-          }
-        />
-      ) : (
-        <Text
-          style={[
-            styles.buttonTextBase,
-            variant === 'primary' && styles.buttonTextPrimary,
-            variant === 'secondary' && styles.buttonTextSecondary,
-            variant === 'subtle' && styles.buttonTextSubtle,
-            !isInteractive && styles.buttonTextDisabled,
-            textStyle,
-          ]}
-        >
-          {title}
-        </Text>
-      )}
-    </Pressable>
+      ];
+    }
+    if (variant === 'subtle') {
+      return [
+        styles.buttonBase,
+        styles.buttonSubtle,
+        { opacity: pressedOpacity },
+        style,
+      ];
+    }
+    return [
+      styles.buttonBase,
+      {
+        backgroundColor: pressed ? colors.brand.dark : colors.brand.primary,
+        opacity: pressedOpacity,
+      },
+      style,
+    ];
+  };
+
+  const getTextStyle = () => {
+    if (disabled) return [styles.buttonText, { color: colors.neutral.textSecondary }, textStyle];
+    if (variant === 'secondary') return [styles.buttonText, { color: colors.brand.primary }, textStyle];
+    if (variant === 'subtle') return [styles.buttonText, { color: colors.neutral.textPrimary }, textStyle];
+    return [styles.buttonText, { color: colors.brand.contrastText }, textStyle];
+  };
+
+  return (
+    <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+      <Pressable
+        onPress={isInteractive ? onPress : undefined}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        disabled={!isInteractive}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel || title}
+        accessibilityHint={accessibilityHint}
+        accessibilityState={{ disabled: !isInteractive, busy: loading }}
+        style={({ pressed }) => getContainerStyle(pressed)}
+      >
+        {loading ? (
+          <ActivityIndicator
+            size="small"
+            color={
+              variant === 'primary'
+                ? colors.brand.contrastText
+                : colors.brand.primary
+            }
+          />
+        ) : (
+          <Text style={getTextStyle()} maxFontSizeMultiplier={1.35}>
+            {title}
+          </Text>
+        )}
+      </Pressable>
+    </Animated.View>
   );
+};
+
+// ============================================================================
+// 3. AnimatedChoiceRow
+// ============================================================================
+export type ChoiceRowState = 'unselected' | 'selected' | 'correct' | 'incorrect';
+
+export interface AnimatedChoiceRowProps {
+  choiceKey: string;
+  text: string;
+  selected?: boolean;
+  disabled?: boolean;
+  verdictState?: 'correct' | 'incorrect' | null;
+  isCorrect?: boolean;
+  isIncorrect?: boolean;
+  index?: number;
+  onPress: () => void;
 }
 
+export const AnimatedChoiceRow: React.FC<AnimatedChoiceRowProps> = ({
+  choiceKey,
+  text,
+  selected = false,
+  disabled = false,
+  verdictState = null,
+  isCorrect = false,
+  isIncorrect = false,
+  onPress,
+}) => {
+  const reduceMotion = useReducedMotion();
+  const scaleAnim = useRef(new Animated.Value(motion.scale.standard)).current;
+
+  // Resolve effective verdict state
+  const resolvedVerdict =
+    verdictState != null
+      ? verdictState
+      : isCorrect
+      ? 'correct'
+      : isIncorrect
+      ? 'incorrect'
+      : null;
+
+  const handlePressIn = () => {
+    if (disabled || reduceMotion) return;
+    Animated.spring(scaleAnim, {
+      toValue: motion.scale.pressed,
+      stiffness: motion.spring.snappy.stiffness,
+      damping: motion.spring.snappy.damping,
+      mass: motion.spring.snappy.mass,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handlePressOut = () => {
+    if (disabled || reduceMotion) return;
+    Animated.spring(scaleAnim, {
+      toValue: motion.scale.standard,
+      stiffness: motion.spring.snappy.stiffness,
+      damping: motion.spring.snappy.damping,
+      mass: motion.spring.snappy.mass,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  let rowBg: string = colors.neutral.surfaceElevated;
+  let rowBorder: string = colors.neutral.borderDefault;
+  let rowBorderWidth: number = borders.hairline;
+  let badgeBg: string = colors.neutral.surfaceMuted;
+  let badgeBorder: string = colors.neutral.borderSubtle;
+  let badgeText: string = colors.neutral.textPrimary;
+  let statusLabel: string | null = null;
+  let statusColor: string = colors.neutral.textSecondary;
+
+  if (resolvedVerdict === 'correct') {
+    rowBg = colors.semantic.correct.surface;
+    rowBorder = colors.semantic.correct.border;
+    rowBorderWidth = borders.emphasized;
+    badgeBg = colors.semantic.correct.text;
+    badgeBorder = colors.semantic.correct.text;
+    badgeText = colors.brand.contrastText;
+    statusLabel = '✓ Correct';
+    statusColor = colors.semantic.correct.text;
+  } else if (resolvedVerdict === 'incorrect') {
+    rowBg = colors.semantic.incorrect.surface;
+    rowBorder = colors.semantic.incorrect.border;
+    rowBorderWidth = borders.emphasized;
+    badgeBg = colors.semantic.incorrect.text;
+    badgeBorder = colors.semantic.incorrect.text;
+    badgeText = colors.brand.contrastText;
+    statusLabel = '✕ Your Choice';
+    statusColor = colors.semantic.incorrect.text;
+  } else if (selected) {
+    rowBg = colors.brand.tint;
+    rowBorder = colors.brand.primary;
+    rowBorderWidth = borders.focused;
+    badgeBg = colors.brand.primary;
+    badgeBorder = colors.brand.primary;
+    badgeText = colors.brand.contrastText;
+  }
+
+  return (
+    <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+      <Pressable
+        onPress={!disabled ? onPress : undefined}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        disabled={disabled}
+        accessibilityRole="radio"
+        accessibilityState={{
+          checked: selected,
+          disabled,
+        }}
+        accessibilityLabel={`Option ${choiceKey}: ${text}${
+          statusLabel ? `, ${statusLabel}` : ''
+        }`}
+        style={({ pressed }) => [
+          styles.choiceRow,
+          {
+            backgroundColor: rowBg,
+            borderColor: rowBorder,
+            borderWidth: rowBorderWidth,
+            opacity:
+              disabled && !resolvedVerdict && !selected
+                ? 0.65
+                : pressed && !disabled
+                ? motion.opacity.pressed
+                : motion.opacity.resting,
+          },
+        ]}
+      >
+        <View
+          style={[
+            styles.choiceKeyBadge,
+            { backgroundColor: badgeBg, borderColor: badgeBorder },
+          ]}
+        >
+          <Text style={[styles.choiceKeyText, { color: badgeText }]}>
+            {choiceKey}
+          </Text>
+        </View>
+
+        <View style={styles.choiceTextWrapper}>
+          <Text
+            style={[
+              styles.choiceText,
+              (selected || resolvedVerdict !== null) && styles.choiceTextEmphasized,
+            ]}
+          >
+            {text}
+          </Text>
+          {statusLabel ? (
+            <Text style={[styles.choiceStatusCaption, { color: statusColor }]}>
+              {statusLabel}
+            </Text>
+          ) : null}
+        </View>
+      </Pressable>
+    </Animated.View>
+  );
+};
+
+// ============================================================================
+// 4. CSCChipBadge
+// ============================================================================
 export type CSCChipVariant =
   | 'brand'
   | 'accentRed'
@@ -262,478 +515,459 @@ export type CSCChipVariant =
 export interface CSCChipBadgeProps {
   label: string;
   variant?: CSCChipVariant;
+  showDot?: boolean;
   indicatorDot?: boolean;
   style?: StyleProp<ViewStyle>;
 }
 
-/**
- * High-contrast status and metadata badge adhering to WCAG AA rules.
- * Pairs accentRed with dark primary text (#191D2E) and a red indicator dot.
- */
-export function CSCChipBadge({
+export const CSCChipBadge: React.FC<CSCChipBadgeProps> = ({
   label,
   variant = 'neutral',
+  showDot = false,
   indicatorDot = false,
   style,
-}: CSCChipBadgeProps) {
-  const getVariantStyles = () => {
-    switch (variant) {
-      case 'brand':
-        return {
-          container: {
-            backgroundColor: colors.brand.tint,
-            borderColor: colors.brand.border,
-          },
-          text: { color: colors.brand.primary },
-          dot: colors.brand.primary,
-        };
-      case 'accentRed':
-        return {
-          container: {
-            backgroundColor: colors.accent.tint,
-            borderColor: colors.accent.light,
-          },
-          // Strictly pair accentRed surface with dark textPrimary for WCAG AAA compliance
-          text: { color: colors.neutral.textPrimary },
-          dot: colors.accent.primary,
-        };
-      case 'success':
-        return {
-          container: {
-            backgroundColor: colors.semantic.correct.surface,
-            borderColor: colors.semantic.correct.border,
-          },
-          text: { color: colors.semantic.correct.text },
-          dot: colors.semantic.correct.text,
-        };
-      case 'warning':
-        return {
-          container: {
-            backgroundColor: colors.semantic.warning.surface,
-            borderColor: colors.semantic.warning.border,
-          },
-          text: { color: colors.semantic.warning.text },
-          dot: colors.semantic.warning.text,
-        };
-      case 'neutral':
-      default:
-        return {
-          container: {
-            backgroundColor: colors.neutral.surfaceMuted,
-            borderColor: colors.neutral.borderSubtle,
-          },
-          text: { color: colors.neutral.textSecondary },
-          dot: colors.neutral.textSecondary,
-        };
-    }
-  };
+}) => {
+  const effectiveShowDot = showDot || indicatorDot;
 
-  const vStyles = getVariantStyles();
+  let bg: string = colors.neutral.surfaceMuted;
+  let border: string = colors.neutral.borderSubtle;
+  let textColor: string = colors.neutral.textSecondary;
+  let dotColor: string = colors.neutral.textSecondary;
+
+  if (variant === 'brand') {
+    bg = colors.brand.tint;
+    border = colors.brand.border;
+    textColor = colors.brand.primary;
+    dotColor = colors.brand.primary;
+  } else if (variant === 'accentRed') {
+    // WCAG AAA Invariant: Dark primary text on light red tint with accent red dot
+    bg = colors.accent.tint;
+    border = colors.accent.light;
+    textColor = colors.neutral.textPrimary;
+    dotColor = colors.accent.primary;
+  } else if (variant === 'success') {
+    bg = colors.semantic.correct.surface;
+    border = colors.semantic.correct.border;
+    textColor = colors.semantic.correct.text;
+    dotColor = colors.semantic.correct.text;
+  } else if (variant === 'warning') {
+    bg = colors.semantic.warning.surface;
+    border = colors.semantic.warning.border;
+    textColor = colors.semantic.warning.text;
+    dotColor = colors.semantic.warning.text;
+  }
 
   return (
-    <View style={[styles.chipBase, vStyles.container, style]}>
-      {indicatorDot && (
-        <View style={[styles.chipDot, { backgroundColor: vStyles.dot }]} />
-      )}
-      <Text style={[styles.chipText, vStyles.text]}>{label}</Text>
+    <View
+      style={[styles.chipBadge, { backgroundColor: bg, borderColor: border }, style]}
+      accessibilityRole="text"
+      accessibilityLabel={label}
+    >
+      {effectiveShowDot ? (
+        <View style={[styles.chipDot, { backgroundColor: dotColor }]} />
+      ) : null}
+      <Text style={[styles.chipText, { color: textColor }]} maxFontSizeMultiplier={1.2}>
+        {label}
+      </Text>
     </View>
   );
-}
+};
 
-export interface ContentCardProps {
-  children: React.ReactNode;
-  delayMs?: number;
-  style?: StyleProp<ViewStyle>;
-}
-
-/**
- * Restrained surface container with 1pt subtle border and no heavy shadows.
- */
-export function ContentCard({ children, style }: ContentCardProps) {
-  return <View style={[styles.contentCard, style]}>{children}</View>;
-}
-
+// ============================================================================
+// 5. AnimatedProgressBar
+// ============================================================================
 export interface AnimatedProgressBarProps {
   current: number;
   total: number;
   height?: number;
+  fillColor?: string;
   color?: string;
 }
 
-/**
- * Smooth horizontal progress bar communicating completion clearly.
- */
-export function AnimatedProgressBar({
+export const AnimatedProgressBar: React.FC<AnimatedProgressBarProps> = ({
   current,
   total,
-  height = 6,
-  color = colors.brand.primary,
-}: AnimatedProgressBarProps) {
+  height = 4,
+  fillColor,
+  color,
+}) => {
+  const effectiveFillColor = fillColor || color || colors.brand.primary;
+  const reduceMotion = useReducedMotion();
   const safeTotal = Math.max(total, 1);
-  const ratio = Math.min(Math.max(current / safeTotal, 0), 1);
-  const animatedWidth = useRef(new Animated.Value(ratio)).current;
+  const safeRatio = total > 0 ? Math.min(Math.max(current / safeTotal, 0), 1) : 0;
+  const progressAnim = useRef(new Animated.Value(safeRatio)).current;
 
   useEffect(() => {
-    Animated.timing(animatedWidth, {
-      toValue: ratio,
+    if (reduceMotion) {
+      progressAnim.setValue(safeRatio);
+      return;
+    }
+    Animated.timing(progressAnim, {
+      toValue: safeRatio,
       duration: motion.duration.normal,
       useNativeDriver: false,
     }).start();
-  }, [ratio, animatedWidth]);
+  }, [safeRatio, reduceMotion, progressAnim]);
 
-  const widthInterpolated = animatedWidth.interpolate({
+  const widthInterpolated = progressAnim.interpolate({
     inputRange: [0, 1],
     outputRange: ['0%', '100%'],
   });
 
   return (
     <View
-      accessibilityRole="progressbar"
-      accessibilityValue={{ min: 0, max: safeTotal, now: current }}
       style={[styles.progressTrack, { height }]}
+      accessibilityRole="progressbar"
+      accessibilityValue={{
+        min: 0,
+        max: total,
+        now: current,
+      }}
     >
       <Animated.View
         style={[
           styles.progressFill,
           {
-            height,
-            backgroundColor: color,
             width: widthInterpolated,
+            height,
+            backgroundColor: effectiveFillColor,
           },
         ]}
       />
     </View>
   );
-}
+};
 
 // ============================================================================
-// 3. LEARNING PRIMITIVES (AnimatedChoiceRow, SubjectRow, Flashcard, Feedback, Summary)
+// 6. Flashcard
 // ============================================================================
-
-export interface AnimatedChoiceRowProps {
-  choiceKey: string;
-  text: string;
-  selected: boolean;
-  disabled?: boolean;
-  isCorrect?: boolean;
-  isIncorrect?: boolean;
-  index?: number;
-  onPress: () => void;
-}
-
-/**
- * Large, thumb-friendly multiple-choice option row (minHeight: 58pt).
- * Communicates selected, correct, and incorrect states using color, border weight, and text badges.
- */
-export function AnimatedChoiceRow({
-  choiceKey,
-  text,
-  selected,
-  disabled = false,
-  isCorrect = false,
-  isIncorrect = false,
-  onPress,
-}: AnimatedChoiceRowProps) {
-  const getRowStyle = (): ViewStyle => {
-    if (isCorrect) {
-      return {
-        backgroundColor: colors.semantic.correct.surface,
-        borderColor: colors.semantic.correct.border,
-        borderWidth: borders.emphasized,
-      };
-    }
-    if (isIncorrect) {
-      return {
-        backgroundColor: colors.semantic.incorrect.surface,
-        borderColor: colors.semantic.incorrect.border,
-        borderWidth: borders.emphasized,
-      };
-    }
-    if (selected) {
-      return {
-        backgroundColor: colors.brand.tint,
-        borderColor: colors.brand.primary,
-        borderWidth: borders.focused,
-      };
-    }
-    return {
-      backgroundColor: colors.neutral.surfaceElevated,
-      borderColor: colors.neutral.borderDefault,
-      borderWidth: borders.hairline,
-    };
-  };
-
-  const getBadgeStyle = (): ViewStyle => {
-    if (isCorrect) {
-      return {
-        backgroundColor: colors.semantic.correct.text,
-        borderColor: colors.semantic.correct.text,
-      };
-    }
-    if (isIncorrect) {
-      return {
-        backgroundColor: colors.semantic.incorrect.text,
-        borderColor: colors.semantic.incorrect.text,
-      };
-    }
-    if (selected) {
-      return {
-        backgroundColor: colors.brand.primary,
-        borderColor: colors.brand.primary,
-      };
-    }
-    return {
-      backgroundColor: colors.neutral.surfaceMuted,
-      borderColor: colors.neutral.borderDefault,
-    };
-  };
-
-  const getKeyTextColor = (): string => {
-    if (isCorrect || isIncorrect || selected) {
-      return colors.brand.contrastText;
-    }
-    return colors.neutral.textPrimary;
-  };
-
-  const getStateLabel = (): string | null => {
-    if (isCorrect) return '✓ Correct';
-    if (isIncorrect) return '✕ Your Choice';
-    return null;
-  };
-
-  const stateLabel = getStateLabel();
-
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{
-        selected,
-        disabled,
-      }}
-      accessibilityLabel={`Option ${choiceKey}: ${text}${
-        stateLabel ? `, ${stateLabel}` : ''
-      }`}
-      disabled={disabled}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.choiceRowBase,
-        getRowStyle(),
-        pressed && !disabled && styles.choiceRowPressed,
-      ]}
-    >
-      <View style={[styles.choiceKeyBadge, getBadgeStyle()]}>
-        <Text style={[styles.choiceKeyText, { color: getKeyTextColor() }]}>
-          {choiceKey}
-        </Text>
-      </View>
-
-      <View style={styles.choiceTextWrapper}>
-        <Text
-          style={[
-            styles.choiceText,
-            (selected || isCorrect) && styles.choiceTextEmphasized,
-          ]}
-        >
-          {text}
-        </Text>
-        {stateLabel && (
-          <Text
-            style={[
-              styles.choiceStatusCaption,
-              {
-                color: isCorrect
-                  ? colors.semantic.correct.text
-                  : colors.semantic.incorrect.text,
-              },
-            ]}
-          >
-            {stateLabel}
-          </Text>
-        )}
-      </View>
-    </Pressable>
-  );
-}
-
-export interface SubjectRowProps {
-  title: string;
-  answeredCount: number;
-  totalQuestions: number;
-  accuracyPercent: number | null;
-  onPress: () => void;
-  isLast?: boolean;
-}
-
-/**
- * Compact, accessible iOS list row for subjects/topics on the Home & Library screens.
- * Replaces repetitive nested cards with clean horizontal dividers and a trailing chevron.
- */
-export function SubjectRow({
-  title,
-  answeredCount,
-  totalQuestions,
-  accuracyPercent,
-  onPress,
-  isLast = false,
-}: SubjectRowProps) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`${title}, ${answeredCount} of ${totalQuestions} answered${
-        accuracyPercent !== null ? `, ${accuracyPercent}% accuracy` : ''
-      }`}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.subjectRow,
-        !isLast && styles.subjectRowDivider,
-        pressed && styles.subjectRowPressed,
-      ]}
-    >
-      <View style={styles.subjectRowMain}>
-        <View style={styles.subjectRowTitleLine}>
-          <Text style={styles.subjectRowTitle}>{title}</Text>
-          {accuracyPercent !== null && (
-            <CSCChipBadge
-              label={`${accuracyPercent}%`}
-              variant={accuracyPercent >= 75 ? 'success' : 'warning'}
-            />
-          )}
-        </View>
-        <Text style={styles.subjectRowMeta}>
-          {answeredCount} of {totalQuestions} questions reviewed
-        </Text>
-        <View style={styles.subjectRowProgress}>
-          <AnimatedProgressBar
-            current={answeredCount}
-            total={totalQuestions || 1}
-            height={4}
-          />
-        </View>
-      </View>
-      <Text style={styles.subjectRowChevron}>›</Text>
-    </Pressable>
-  );
-}
-
 export interface FlashcardProps {
+  topicTitle?: string;
   topicLabel?: string;
-  frontPrompt: string;
-  backAnswer: string;
-  explanation?: string | null;
   sourcePage?: number;
+  questionStem?: string;
+  frontPrompt?: string;
+  canonicalAnswer?: string;
+  backAnswer?: string;
+  canonicalExplanation?: string | null;
+  explanation?: string | null;
   revealed: boolean;
-  onReveal: () => void;
+  onToggleReveal?: () => void;
+  onReveal?: () => void;
 }
 
-/**
- * Dedicated Flashcard component with controlled reveal state and clear typography.
- */
-export function Flashcard({
-  topicLabel = 'CONCEPT RECALL',
-  frontPrompt,
-  backAnswer,
-  explanation,
+export const Flashcard: React.FC<FlashcardProps> = ({
+  topicTitle,
+  topicLabel = 'CIVIL SERVICE REVIEW',
   sourcePage,
+  questionStem,
+  frontPrompt = '',
+  canonicalAnswer,
+  backAnswer = '',
+  canonicalExplanation,
+  explanation,
   revealed,
+  onToggleReveal,
   onReveal,
-}: FlashcardProps) {
+}) => {
+  const reduceMotion = useReducedMotion();
+  const revealAnim = useRef(new Animated.Value(revealed ? 1 : 0)).current;
+
+  const effectiveTitle = topicTitle || topicLabel;
+  const effectiveStem = questionStem || frontPrompt;
+  const effectiveAnswer = canonicalAnswer || backAnswer;
+  const effectiveExplanation = canonicalExplanation !== undefined ? canonicalExplanation : explanation;
+  const handleToggle = onToggleReveal || onReveal || (() => {});
+
+  useEffect(() => {
+    if (!revealed) {
+      revealAnim.setValue(0);
+      return;
+    }
+    if (reduceMotion) {
+      revealAnim.setValue(1);
+      return;
+    }
+    Animated.timing(revealAnim, {
+      toValue: 1,
+      duration: motion.duration.slow,
+      useNativeDriver: true,
+    }).start();
+  }, [revealed, reduceMotion, revealAnim]);
+
   return (
     <Pressable
+      onPress={handleToggle}
       accessibilityRole="button"
       accessibilityLabel={
         revealed
-          ? `Answer revealed: ${backAnswer}`
-          : `Flashcard prompt: ${frontPrompt}. Tap to reveal answer.`
+          ? `Flashcard answer revealed: ${effectiveAnswer}`
+          : `Flashcard question: ${effectiveStem}. Tap to reveal official answer.`
       }
-      disabled={revealed}
-      onPress={onReveal}
-      style={({ pressed }) => [
-        styles.flashcardSurface,
-        pressed && !revealed && { opacity: motion.opacity.pressed },
-      ]}
+      style={styles.flashcardContainer}
     >
-      <View style={styles.flashcardMetaRow}>
-        <Text style={styles.flashcardOverline}>{topicLabel.toUpperCase()}</Text>
-        {sourcePage ? (
+      <View style={styles.flashcardHeaderRow}>
+        <Text style={styles.flashcardOverline} numberOfLines={1}>
+          {effectiveTitle.toUpperCase()}
+        </Text>
+        {sourcePage !== undefined ? (
           <CSCChipBadge label={`p. ${sourcePage}`} variant="neutral" />
         ) : null}
       </View>
 
-      <Text style={styles.flashcardPromptText}>{frontPrompt}</Text>
+      <Text style={styles.flashcardStem}>{effectiveStem}</Text>
 
       {!revealed ? (
-        <View style={styles.flashcardHintBox}>
-          <Text style={styles.flashcardHintText}>Tap to reveal answer</Text>
+        <View style={styles.flashcardPromptFooter}>
+          <View style={styles.hairlineDivider} />
+          <Text style={styles.flashcardTapPrompt}>Tap card to reveal answer</Text>
         </View>
       ) : (
-        <View style={styles.flashcardBackSection}>
-          <View style={styles.divider} />
-          <Text style={styles.flashcardAnswerLabel}>OFFICIAL ANSWER</Text>
-          <Text style={styles.flashcardAnswerText}>{backAnswer}</Text>
-          {explanation ? (
+        <Animated.View
+          style={[
+            styles.flashcardAnswerSection,
+            {
+              opacity: revealAnim,
+              transform: [
+                {
+                  translateY: revealAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [motion.distance.subtle, 0],
+                  }),
+                },
+              ],
+            },
+          ]}
+        >
+          <View style={styles.hairlineDivider} />
+          <Text style={styles.flashcardAnswerOverline}>OFFICIAL ANSWER</Text>
+          <Text style={styles.flashcardCanonicalAnswer}>{effectiveAnswer}</Text>
+
+          {effectiveExplanation ? (
             <View style={styles.flashcardExplanationBox}>
-              <Text style={styles.flashcardExplanationLabel}>
-                Why this is correct
+              <Text style={styles.flashcardExplanationTitle}>
+                Canonical Explanation
               </Text>
-              <Text style={styles.flashcardExplanationText}>{explanation}</Text>
+              <Text style={styles.flashcardExplanationBody}>
+                {effectiveExplanation}
+              </Text>
             </View>
           ) : null}
-        </View>
+        </Animated.View>
       )}
     </Pressable>
   );
-}
+};
 
+// ============================================================================
+// 7. AnswerFeedbackBanner
+// ============================================================================
 export interface AnswerFeedbackBannerProps {
   isCorrect: boolean;
   score: number;
   canonicalAnswer?: string | null;
 }
 
-/**
- * Semantic feedback banner combining color, border, icon symbol, and explicit text.
- */
-export function AnswerFeedbackBanner({
+export const AnswerFeedbackBanner: React.FC<AnswerFeedbackBannerProps> = ({
   isCorrect,
   score,
   canonicalAnswer,
-}: AnswerFeedbackBannerProps) {
-  const isPartial = !isCorrect && score > 0;
+}) => {
+  const isPartial = !isCorrect && score > 0 && score < 1.0;
+
+  let bg: string = colors.semantic.incorrect.surface;
+  let border: string = colors.semantic.incorrect.border;
+  let textColor: string = colors.semantic.incorrect.text;
+  let headlineText = '✕ Incorrect';
+
+  if (isCorrect) {
+    bg = colors.semantic.correct.surface;
+    border = colors.semantic.correct.border;
+    textColor = colors.semantic.correct.text;
+    headlineText = '✓ Correct Answer';
+  } else if (isPartial) {
+    bg = colors.semantic.warning.surface;
+    border = colors.semantic.warning.border;
+    textColor = colors.semantic.warning.text;
+    headlineText = `! Partially Correct (${Math.round(score * 100)}%)`;
+  }
 
   return (
     <View
-      accessibilityRole="alert"
       style={[
         styles.feedbackBanner,
-        isCorrect
-          ? styles.feedbackCorrect
-          : isPartial
-          ? styles.feedbackPartial
-          : styles.feedbackIncorrect,
+        { backgroundColor: bg, borderColor: border },
       ]}
+      accessibilityRole="alert"
+      accessibilityLiveRegion="polite"
     >
-      <Text
-        style={[
-          styles.feedbackTitle,
-          {
-            color: isCorrect
-              ? colors.semantic.correct.text
-              : isPartial
-              ? colors.semantic.warning.text
-              : colors.semantic.incorrect.text,
-          },
-        ]}
-      >
-        {isCorrect
-          ? '✓ Correct Answer'
-          : isPartial
-          ? `! Partially Correct (${Math.round(score * 100)}%)`
-          : `✕ Incorrect — Official Answer: ${canonicalAnswer ?? 'See below'}`}
+      <Text style={[styles.feedbackHeadline, { color: textColor }]}>
+        {headlineText}
       </Text>
+      {!isCorrect && canonicalAnswer ? (
+        <Text style={[styles.feedbackSubtext, { color: textColor }]}>
+          Official Answer: {canonicalAnswer}
+        </Text>
+      ) : null}
     </View>
   );
+};
+
+// ============================================================================
+// 8. ContentCard & EvidenceCard
+// ============================================================================
+export interface ContentCardProps {
+  overline?: string;
+  title?: string;
+  rightBadge?: React.ReactNode;
+  children: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
 }
 
+export const ContentCard: React.FC<ContentCardProps> = ({
+  overline,
+  title,
+  rightBadge,
+  children,
+  style,
+}) => (
+  <View style={[styles.contentCard, style]}>
+    {overline || title || rightBadge ? (
+      <View style={styles.contentCardHeader}>
+        <View style={{ flex: 1 }}>
+          {overline ? (
+            <Text style={styles.contentCardOverline}>{overline}</Text>
+          ) : null}
+          {title ? <Text style={styles.contentCardTitle}>{title}</Text> : null}
+        </View>
+        {rightBadge}
+      </View>
+    ) : null}
+    {children}
+  </View>
+);
+
+export interface EvidenceCardProps {
+  retrievedPassage: RetrievedPassage;
+}
+
+export const EvidenceCard: React.FC<EvidenceCardProps> = ({
+  retrievedPassage,
+}) => {
+  const { passage, strategy } = retrievedPassage;
+  const pageLabel =
+    passage.startPage === passage.endPage
+      ? `p. ${passage.startPage}`
+      : `pp. ${passage.startPage}–${passage.endPage}`;
+
+  return (
+    <View style={styles.evidenceContainer}>
+      <View style={styles.evidenceAccentBar} />
+      <View style={styles.evidenceContent}>
+        <Text style={styles.evidenceQuoteText}>“{passage.text}”</Text>
+        <View style={styles.evidenceMetaRow}>
+          <Text style={styles.evidenceCitationText} numberOfLines={1}>
+            {passage.section ? `${passage.chapter} · ${passage.section}` : passage.chapter}
+          </Text>
+          <CSCChipBadge
+            label={`${pageLabel} · ${
+              strategy === 'linked' ? 'Verified' : 'Reference'
+            }`}
+            variant="neutral"
+          />
+        </View>
+      </View>
+    </View>
+  );
+};
+
+// ============================================================================
+// 9. SubjectRow
+// ============================================================================
+export interface SubjectRowProps {
+  summary?: TopicSummary;
+  onPressTopic?: (topicId: string) => void;
+  title?: string;
+  answeredCount?: number;
+  totalQuestions?: number;
+  accuracyPercent?: number | null;
+  onPress?: () => void;
+  isLast?: boolean;
+}
+
+export const SubjectRow: React.FC<SubjectRowProps> = ({
+  summary,
+  onPressTopic,
+  title,
+  answeredCount: propAnsweredCount,
+  totalQuestions: propTotalQuestions,
+  accuracyPercent: propAccuracy,
+  onPress,
+  isLast = false,
+}) => {
+  const displayTitle = summary ? summary.topic.title : (title || '');
+  const displayTotal = summary ? summary.totalQuestions : (propTotalQuestions || 0);
+  const displayAnswered = summary ? summary.answeredCount : (propAnsweredCount || 0);
+  const displayAccuracy = summary
+    ? (summary.answeredCount > 0 ? Math.round((summary.correctCount / summary.answeredCount) * 100) : null)
+    : (propAccuracy !== undefined ? propAccuracy : null);
+
+  const remaining = Math.max(displayTotal - displayAnswered, 0);
+
+  const handlePress = () => {
+    if (summary && onPressTopic) {
+      onPressTopic(summary.topic.id);
+    } else if (onPress) {
+      onPress();
+    }
+  };
+
+  return (
+    <Pressable
+      onPress={handlePress}
+      accessibilityRole="button"
+      accessibilityLabel={`${displayTitle}. ${displayAnswered} of ${displayTotal} questions reviewed.${
+        displayAccuracy !== null ? ` Accuracy ${displayAccuracy} percent.` : ''
+      } Tap to practice this subject.`}
+      style={({ pressed }) => [
+        styles.subjectRow,
+        !isLast && styles.subjectRowDivider,
+        pressed && { backgroundColor: colors.neutral.surface },
+      ]}
+    >
+      <View style={styles.subjectHeaderRow}>
+        <Text style={styles.subjectTitle}>{displayTitle}</Text>
+        {displayAccuracy !== null ? (
+          <CSCChipBadge
+            label={`${displayAccuracy}%`}
+            variant={displayAccuracy >= 75 ? 'success' : 'warning'}
+          />
+        ) : (
+          <CSCChipBadge label="New" variant="neutral" />
+        )}
+      </View>
+
+      <View style={styles.subjectMetaRow}>
+        <Text style={styles.subjectMetaText}>
+          {displayAnswered} of {displayTotal} reviewed
+        </Text>
+        <Text style={styles.subjectMetaText}>
+          {remaining > 0 ? `${remaining} remaining` : 'Complete'}
+        </Text>
+      </View>
+
+      <AnimatedProgressBar
+        current={displayAnswered}
+        total={displayTotal}
+        height={4}
+      />
+    </Pressable>
+  );
+};
+
+// ============================================================================
+// 10. EmptyState
+// ============================================================================
 export interface EmptyStateProps {
   title: string;
   message: string;
@@ -741,12 +975,12 @@ export interface EmptyStateProps {
   onAction?: () => void;
 }
 
-export function EmptyState({
+export const EmptyState: React.FC<EmptyStateProps> = ({
   title,
   message,
   actionLabel,
   onAction,
-}: EmptyStateProps) {
+}) => {
   return (
     <View style={styles.emptyStateBox}>
       <Text style={styles.emptyStateTitle}>{title}</Text>
@@ -761,7 +995,7 @@ export function EmptyState({
       )}
     </View>
   );
-}
+};
 
 const styles = StyleSheet.create({
   safeArea: {
@@ -772,7 +1006,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: spacing.xl, // 20pt iPhone 16 horizontal padding
+    paddingHorizontal: spacing.xl,
     paddingTop: spacing.base,
     paddingBottom: spacing.xxxl,
     gap: spacing.xl,
@@ -856,26 +1090,27 @@ const styles = StyleSheet.create({
     color: colors.brand.primary,
   },
   bottomActionBar: {
-    paddingHorizontal: spacing.xl,
-    paddingTop: spacing.md,
-    paddingBottom: spacing.base,
-    backgroundColor: colors.neutral.canvas,
+    backgroundColor: colors.neutral.surfaceElevated,
     borderTopWidth: borders.hairline,
     borderTopColor: colors.neutral.borderSubtle,
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.xxl,
+  },
+  bottomActionInner: {
+    width: '100%',
   },
   buttonBase: {
-    minHeight: controls.buttonHeight, // 50pt
-    borderRadius: radius.md, // 12pt consistent radius
+    minHeight: controls.buttonHeight,
     paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
   },
-  buttonPrimary: {
-    backgroundColor: colors.brand.primary,
-  },
   buttonSecondary: {
-    backgroundColor: colors.neutral.surfaceElevated,
+    backgroundColor: colors.neutral.canvas,
     borderWidth: borders.hairline,
     borderColor: colors.brand.border,
   },
@@ -884,52 +1119,66 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: {
     backgroundColor: colors.neutral.surfaceMuted,
+    borderWidth: borders.hairline,
     borderColor: colors.neutral.borderSubtle,
   },
-  buttonPressed: {
-    opacity: motion.opacity.pressed,
-    transform: [{ scale: motion.scale.pressed }],
-  },
-  buttonTextBase: {
-    fontSize: typography.body.fontSize,
+  buttonText: {
+    ...typography.body,
     fontWeight: '600',
+    textAlign: 'center',
   },
-  buttonTextPrimary: {
-    color: colors.brand.contrastText,
+  choiceRow: {
+    minHeight: controls.choiceRowMinHeight,
+    paddingHorizontal: spacing.base,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
   },
-  buttonTextSecondary: {
-    color: colors.brand.primary,
+  choiceKeyBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: radius.sm,
+    borderWidth: borders.hairline,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: spacing.md,
   },
-  buttonTextSubtle: {
+  choiceKeyText: {
+    ...typography.subheadline,
+    fontWeight: '700',
+  },
+  choiceTextWrapper: {
+    flex: 1,
+  },
+  choiceText: {
+    ...typography.body,
     color: colors.neutral.textPrimary,
   },
-  buttonTextDisabled: {
-    color: colors.neutral.textMuted,
+  choiceTextEmphasized: {
+    fontWeight: '600',
   },
-  chipBase: {
+  choiceStatusCaption: {
+    ...typography.caption,
+    marginTop: spacing.xs,
+  },
+  chipBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
     borderRadius: radius.sm,
     borderWidth: borders.hairline,
-    gap: spacing.xs,
   },
   chipDot: {
     width: 6,
     height: 6,
     borderRadius: radius.pill,
+    marginRight: 6,
   },
   chipText: {
-    fontSize: typography.caption.fontSize,
-    fontWeight: '600',
-  },
-  contentCard: {
-    backgroundColor: colors.neutral.surfaceElevated,
-    borderRadius: radius.lg,
-    borderWidth: borders.hairline,
-    borderColor: colors.neutral.borderSubtle,
-    padding: spacing.base,
+    ...typography.caption,
   },
   progressTrack: {
     width: '100%',
@@ -940,187 +1189,181 @@ const styles = StyleSheet.create({
   progressFill: {
     borderRadius: radius.pill,
   },
-  choiceRowBase: {
-    minHeight: 58, // 56-64pt recommended iPhone 16 answer option height
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.base,
-    paddingVertical: spacing.md,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-  },
-  choiceRowPressed: {
-    opacity: motion.opacity.pressed,
-    transform: [{ scale: motion.scale.pressed }],
-  },
-  choiceKeyBadge: {
-    width: 32,
-    height: 32,
-    borderRadius: radius.sm,
+  flashcardContainer: {
+    backgroundColor: colors.neutral.canvas,
+    borderColor: colors.neutral.borderSubtle,
     borderWidth: borders.hairline,
+    borderRadius: radius.lg,
+    padding: spacing.xxl,
+    minHeight: 260,
+    justifyContent: 'space-between',
+  },
+  flashcardHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    justifyContent: 'center',
+    marginBottom: spacing.base,
   },
-  choiceKeyText: {
-    fontSize: typography.subheadline.fontSize,
-    fontWeight: '700',
-  },
-  choiceTextWrapper: {
+  flashcardOverline: {
+    ...typography.caption,
+    color: colors.brand.primary,
     flex: 1,
-    gap: 2,
+    marginRight: spacing.sm,
   },
-  choiceText: {
-    fontSize: typography.body.fontSize,
-    lineHeight: typography.body.lineHeight,
+  flashcardStem: {
+    ...typography.title2,
+    lineHeight: 30,
+    color: colors.neutral.textPrimary,
+    marginVertical: spacing.md,
+  },
+  flashcardPromptFooter: {
+    marginTop: spacing.xl,
+  },
+  hairlineDivider: {
+    height: borders.hairline,
+    backgroundColor: colors.neutral.divider,
+    marginVertical: spacing.base,
+  },
+  flashcardTapPrompt: {
+    ...typography.subheadline,
+    color: colors.brand.primary,
+    textAlign: 'center',
+    fontWeight: '600',
+  },
+  flashcardAnswerSection: {
+    marginTop: spacing.sm,
+  },
+  flashcardAnswerOverline: {
+    ...typography.caption,
+    color: colors.semantic.correct.text,
+    marginBottom: spacing.xs,
+  },
+  flashcardCanonicalAnswer: {
+    ...typography.headline,
+    color: colors.neutral.textPrimary,
+    marginBottom: spacing.base,
+  },
+  flashcardExplanationBox: {
+    backgroundColor: colors.neutral.surface,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    borderWidth: borders.hairline,
+    borderColor: colors.neutral.borderSubtle,
+  },
+  flashcardExplanationTitle: {
+    ...typography.footnote,
+    fontWeight: '600',
+    color: colors.neutral.textSecondary,
+    marginBottom: spacing.xs,
+  },
+  flashcardExplanationBody: {
+    ...typography.callout,
     color: colors.neutral.textPrimary,
   },
-  choiceTextEmphasized: {
-    fontWeight: '600',
+  feedbackBanner: {
+    paddingHorizontal: spacing.base,
+    paddingVertical: spacing.md,
+    borderRadius: radius.md,
+    borderWidth: borders.hairline,
+    marginTop: spacing.sm,
+    marginBottom: spacing.base,
   },
-  choiceStatusCaption: {
-    fontSize: typography.caption.fontSize,
-    fontWeight: '600',
-    marginTop: 2,
+  feedbackHeadline: {
+    ...typography.subheadline,
+    fontWeight: '700',
+  },
+  feedbackSubtext: {
+    ...typography.footnote,
+    marginTop: spacing.xs,
+  },
+  contentCard: {
+    backgroundColor: colors.neutral.canvas,
+    borderRadius: radius.lg,
+    borderWidth: borders.hairline,
+    borderColor: colors.neutral.borderSubtle,
+    padding: spacing.base,
+    marginBottom: spacing.base,
+  },
+  contentCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.sm,
+  },
+  contentCardOverline: {
+    ...typography.caption,
+    color: colors.neutral.textSecondary,
+    textTransform: 'uppercase',
+    marginBottom: 2,
+  },
+  contentCardTitle: {
+    ...typography.headline,
+    color: colors.neutral.textPrimary,
+  },
+  evidenceContainer: {
+    flexDirection: 'row',
+    backgroundColor: colors.neutral.canvas,
+    borderRadius: radius.md,
+    borderWidth: borders.hairline,
+    borderColor: colors.neutral.borderSubtle,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  evidenceAccentBar: {
+    width: 3,
+    borderRadius: radius.pill,
+    backgroundColor: colors.brand.primary,
+    marginRight: spacing.md,
+  },
+  evidenceContent: {
+    flex: 1,
+  },
+  evidenceQuoteText: {
+    ...typography.callout,
+    color: colors.neutral.textPrimary,
+    marginBottom: spacing.sm,
+  },
+  evidenceMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  evidenceCitationText: {
+    ...typography.footnote,
+    color: colors.neutral.textSecondary,
+    flex: 1,
   },
   subjectRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
     paddingVertical: spacing.base,
     paddingHorizontal: spacing.base,
-    backgroundColor: colors.neutral.surfaceElevated,
-    minHeight: 68,
-    gap: spacing.md,
   },
   subjectRowDivider: {
     borderBottomWidth: borders.hairline,
     borderBottomColor: colors.neutral.divider,
   },
-  subjectRowPressed: {
-    backgroundColor: colors.neutral.surfaceMuted,
-  },
-  subjectRowMain: {
-    flex: 1,
-    gap: spacing.xs,
-  },
-  subjectRowTitleLine: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: spacing.sm,
-  },
-  subjectRowTitle: {
-    flex: 1,
-    fontSize: typography.body.fontSize,
-    fontWeight: '600',
-    color: colors.neutral.textPrimary,
-  },
-  subjectRowMeta: {
-    fontSize: typography.footnote.fontSize,
-    color: colors.neutral.textSecondary,
-  },
-  subjectRowProgress: {
-    marginTop: 2,
-  },
-  subjectRowChevron: {
-    fontSize: 22,
-    fontWeight: '500',
-    color: colors.neutral.textMuted,
-  },
-  flashcardSurface: {
-    backgroundColor: colors.neutral.surfaceElevated,
-    borderRadius: radius.lg,
-    borderWidth: borders.hairline,
-    borderColor: colors.neutral.borderSubtle,
-    padding: spacing.xxl,
-    minHeight: 260,
-    justifyContent: 'space-between',
-    gap: spacing.xl,
-  },
-  flashcardMetaRow: {
+  subjectHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: spacing.xs,
   },
-  flashcardOverline: {
-    fontSize: typography.footnote.fontSize,
-    fontWeight: '600',
-    color: colors.brand.primary,
-    letterSpacing: 0.6,
-  },
-  flashcardPromptText: {
-    fontSize: typography.title2.fontSize,
-    lineHeight: 30,
+  subjectTitle: {
+    ...typography.body,
     fontWeight: '600',
     color: colors.neutral.textPrimary,
+    flex: 1,
+    marginRight: spacing.sm,
   },
-  flashcardHintBox: {
-    paddingTop: spacing.base,
-    borderTopWidth: borders.hairline,
-    borderTopColor: colors.neutral.divider,
-    alignItems: 'center',
+  subjectMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.sm,
   },
-  flashcardHintText: {
-    fontSize: typography.subheadline.fontSize,
-    fontWeight: '600',
-    color: colors.brand.primary,
-  },
-  flashcardBackSection: {
-    gap: spacing.sm,
-  },
-  flashcardAnswerLabel: {
-    fontSize: typography.caption.fontSize,
-    fontWeight: '700',
-    color: colors.semantic.correct.text,
-    letterSpacing: 0.5,
-  },
-  flashcardAnswerText: {
-    fontSize: typography.headline.fontSize,
-    lineHeight: typography.headline.lineHeight,
-    fontWeight: '700',
-    color: colors.neutral.textPrimary,
-  },
-  flashcardExplanationBox: {
-    marginTop: spacing.xs,
-    padding: spacing.md,
-    borderRadius: radius.md,
-    backgroundColor: colors.neutral.surface,
-    gap: spacing.xs,
-  },
-  flashcardExplanationLabel: {
-    fontSize: typography.footnote.fontSize,
-    fontWeight: '600',
+  subjectMetaText: {
+    ...typography.footnote,
     color: colors.neutral.textSecondary,
-  },
-  flashcardExplanationText: {
-    fontSize: typography.body.fontSize,
-    lineHeight: typography.body.lineHeight,
-    color: colors.neutral.textPrimary,
-  },
-  divider: {
-    height: borders.hairline,
-    backgroundColor: colors.neutral.divider,
-    marginVertical: spacing.xs,
-  },
-  feedbackBanner: {
-    padding: spacing.md,
-    borderRadius: radius.md,
-    borderWidth: borders.hairline,
-  },
-  feedbackCorrect: {
-    backgroundColor: colors.semantic.correct.surface,
-    borderColor: colors.semantic.correct.border,
-  },
-  feedbackPartial: {
-    backgroundColor: colors.semantic.warning.surface,
-    borderColor: colors.semantic.warning.border,
-  },
-  feedbackIncorrect: {
-    backgroundColor: colors.semantic.incorrect.surface,
-    borderColor: colors.semantic.incorrect.border,
-  },
-  feedbackTitle: {
-    fontSize: typography.body.fontSize,
-    fontWeight: '600',
   },
   emptyStateBox: {
     padding: spacing.xxl,
@@ -1133,13 +1376,12 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   emptyStateTitle: {
-    fontSize: typography.headline.fontSize,
-    fontWeight: '600',
+    ...typography.headline,
     color: colors.neutral.textPrimary,
     textAlign: 'center',
   },
   emptyStateMessage: {
-    fontSize: typography.subheadline.fontSize,
+    ...typography.subheadline,
     color: colors.neutral.textSecondary,
     textAlign: 'center',
   },
@@ -1147,4 +1389,3 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
 });
-

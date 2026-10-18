@@ -106,7 +106,7 @@ export function ReviewHomeScreen({
         return 'AI Active';
       case 'missing':
       default:
-        return 'Offline Mode';
+        return 'Rule-Based Mode';
     }
   };
 

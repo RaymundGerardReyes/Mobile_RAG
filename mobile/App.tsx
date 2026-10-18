@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { StatusBar, StyleSheet, View } from 'react-native';
 import { colors } from './src/theme/tokens.js';
 import {
@@ -7,15 +7,33 @@ import {
   StudyMode,
 } from './src/features/review/ReviewHomeScreen.js';
 import { QuizReviewScreen } from './src/features/quiz/QuizReviewScreen.js';
-import { Question } from './src/domain/types.js';
-import { TopicSummary } from './src/application/ports/question_repository.js';
-import { ModelRuntimeStatus } from './src/application/ports/local_llm_port.js';
+import { AnswerAttempt, Passage, Question, Topic } from './src/domain/types.js';
 import {
-  scoreExactIdentification,
-  scoreMultipleChoice,
-} from './src/domain/scoring.js';
-import { SubmitAnswerResponse } from './src/application/use_cases/submit_answer.js';
-import { RetrievedPassage } from './src/application/ports/passage_retriever.js';
+  QuestionRepository,
+  QuestionSelectionQuery,
+  TopicSummary,
+} from './src/application/ports/question_repository.js';
+import {
+  PassageRetriever,
+  RetrievedPassage,
+} from './src/application/ports/passage_retriever.js';
+import {
+  GenerationChunk,
+  GenerationRequest,
+  LocalLlmPort,
+  ModelRuntimeStatus,
+} from './src/application/ports/local_llm_port.js';
+import { GetNextQuestion } from './src/application/use_cases/get_next_question.js';
+import { SubmitAnswer } from './src/application/use_cases/submit_answer.js';
+import { GetExplanationContext } from './src/application/use_cases/get_explanation_context.js';
+import { ExplainMore } from './src/application/use_cases/explain_more.js';
+import { InterpretFreeAnswer } from './src/application/use_cases/interpret_free_answer.js';
+import { CancelGeneration } from './src/application/use_cases/cancel_generation.js';
+import {
+  ReviewSessionController,
+  ReviewSessionState,
+} from './src/controllers/review_session_controller.js';
+import { DiagnosticsLogger } from './src/diagnostics/diagnostics_logger.js';
 
 const INITIAL_TOPICS: TopicSummary[] = [
   {
@@ -211,140 +229,280 @@ const SAMPLE_PASSAGES: Record<string, RetrievedPassage[]> = {
   ],
 };
 
+/**
+ * In-memory repository implementing QuestionRepository & PassageRetriever.
+ * Dynamically tracks student answer attempts and recalculates topic summaries.
+ */
+class InMemoryQuestionRepository implements QuestionRepository, PassageRetriever {
+  private questions: Question[];
+  private topics: TopicSummary[];
+  private passagesMap: Record<string, RetrievedPassage[]>;
+  private attempts: AnswerAttempt[] = [];
+
+  constructor(
+    questions: Question[],
+    topics: TopicSummary[],
+    passages: Record<string, RetrievedPassage[]>
+  ) {
+    this.questions = [...questions];
+    this.topics = topics.map((t) => ({ ...t, topic: { ...t.topic } }));
+    this.passagesMap = passages;
+  }
+
+  async getQuestionById(id: string): Promise<Question | null> {
+    return this.questions.find((q) => q.id === id) || null;
+  }
+
+  async getNextQuestions(query: QuestionSelectionQuery): Promise<Question[]> {
+    let result = [...this.questions];
+
+    if (query.topicId) {
+      result = result.filter((q) => q.topicId === query.topicId);
+    }
+
+    if (query.mode === 'unanswered') {
+      const answeredIds = new Set(this.attempts.map((a) => a.questionId));
+      result = result.filter((q) => !answeredIds.has(q.id));
+    } else if (query.mode === 'weak_areas') {
+      const incorrectIds = new Set(
+        this.attempts.filter((a) => !a.isCorrect || a.score < 1.0).map((a) => a.questionId)
+      );
+      const weak = result.filter((q) => incorrectIds.has(q.id));
+      if (weak.length > 0) {
+        result = weak;
+      }
+    }
+
+    if (query.excludeQuestionIds && query.excludeQuestionIds.length > 0) {
+      const excludeSet = new Set(query.excludeQuestionIds);
+      result = result.filter((q) => !excludeSet.has(q.id));
+    }
+
+    if (query.limit && query.limit > 0) {
+      result = result.slice(0, query.limit);
+    }
+
+    return result;
+  }
+
+  async recordAttempt(attempt: AnswerAttempt): Promise<void> {
+    const isFirstAttemptOnThisQuestion = !this.attempts.some(
+      (a) => a.questionId === attempt.questionId
+    );
+    const wasAlreadyCorrect = this.attempts.some(
+      (a) => a.questionId === attempt.questionId && a.isCorrect
+    );
+
+    this.attempts.push(attempt);
+
+    const question = this.questions.find((q) => q.id === attempt.questionId);
+    if (!question) return;
+
+    const topicSummary = this.topics.find((t) => t.topic.id === question.topicId);
+    if (topicSummary) {
+      if (isFirstAttemptOnThisQuestion) {
+        topicSummary.answeredCount += 1;
+      }
+      if (attempt.isCorrect && !wasAlreadyCorrect) {
+        topicSummary.correctCount += 1;
+      }
+    }
+  }
+
+  async getTopicSummaries(): Promise<TopicSummary[]> {
+    return this.topics.map((t) => ({ ...t, topic: { ...t.topic } }));
+  }
+
+  async retrieveForQuestion(
+    questionId: string,
+    _stem: string,
+    _limit?: number
+  ): Promise<RetrievedPassage[]> {
+    return this.passagesMap[questionId] || [];
+  }
+
+  async searchPassages(query: string, _limit?: number): Promise<RetrievedPassage[]> {
+    const norm = query.toLowerCase();
+    const matches: RetrievedPassage[] = [];
+    for (const passages of Object.values(this.passagesMap)) {
+      for (const p of passages) {
+        if (p.passage.text.toLowerCase().includes(norm)) {
+          matches.push(p);
+        }
+      }
+    }
+    return matches;
+  }
+}
+
+/**
+ * On-device local LLM port mock providing realistic streaming generation
+ * and JSON-schema compliant rubric verdicts.
+ */
+class LocalMockLlmPort implements LocalLlmPort {
+  async getStatus(): Promise<ModelRuntimeStatus> {
+    return {
+      state: 'ready',
+      manifestId: 'qwen2.5-1.5b-csc',
+      modelName: 'Qwen2.5-1.5B-Instruct-Q4_K_M',
+      peakMemoryBytes: 850 * 1024 * 1024,
+    };
+  }
+
+  async load(): Promise<void> {}
+
+  async release(): Promise<void> {}
+
+  async *generate(
+    request: GenerationRequest,
+    signal?: AbortSignal
+  ): AsyncIterable<GenerationChunk> {
+    const isRubric =
+      request.prompt.includes('interpret_free_answer') ||
+      request.prompt.includes('verdict') ||
+      request.prompt.includes('student_answer');
+
+    if (isRubric) {
+      const responsePayload = JSON.stringify({
+        verdict: 'equivalent',
+        matched_concepts: [
+          'Code of Conduct and Ethical Standards for Public Officials and Employees',
+          'R.A. 6713',
+        ],
+        missing_concepts: [],
+        evidence_passage_ids: ['p0026'],
+        confidence: 0.95,
+      });
+
+      const words = responsePayload.split(' ');
+      for (let i = 0; i < words.length; i++) {
+        if (signal?.aborted) throw new Error('Generation cancelled');
+        yield { text: words[i] + (i === words.length - 1 ? '' : ' '), isComplete: i === words.length - 1 };
+      }
+      return;
+    }
+
+    const isFilipino = request.prompt.includes('Tagalog') || request.prompt.includes('Filipino');
+    const text = isFilipino
+      ? 'Ayon sa Saligang Batas at mga opisyal na dokumento ng Komisyon sa Serbisyo Sibil, ang sagot na ito ay itinatadhana upang matiyak ang pananagutan at tapat na paglilingkod sa bayan.'
+      : 'Grounded in the official Philippine Civil Service Commission reference manuals, this provision establishes the legal standard tested in the Civil Service Examination.';
+
+    const chunks = text.split(' ');
+    for (let i = 0; i < chunks.length; i++) {
+      if (signal?.aborted) throw new Error('Generation cancelled');
+      yield { text: chunks[i] + (i === chunks.length - 1 ? '' : ' '), isComplete: i === chunks.length - 1 };
+    }
+  }
+}
+
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<'home' | 'quiz'>('home');
   const [selectedMode, setSelectedMode] = useState<StudyMode>('all');
   const [sessionFormat, setSessionFormat] = useState<SessionFormat>('quiz');
-  const [questionIndex, setQuestionIndex] = useState(0);
-  const [selectedChoiceId, setSelectedChoiceId] = useState<string | null>(null);
-  const [freeTextInput, setFreeTextInput] = useState('');
-  const [submissionResult, setSubmissionResult] =
-    useState<SubmitAnswerResponse | null>(null);
-  const [aiExplanation, setAiExplanation] = useState<string | null>(null);
-  const [isGeneratingAi, setIsGeneratingAi] = useState(false);
-  const [aiError, setAiError] = useState<string | null>(null);
-  const [isSessionCompleted, setIsSessionCompleted] = useState(false);
+  const [activeTopicId, setActiveTopicId] = useState<string | undefined>(undefined);
+  const [topicSummaries, setTopicSummaries] = useState<TopicSummary[]>(INITIAL_TOPICS);
 
-  const modelStatus: ModelRuntimeStatus = { state: 'ready' };
-
-  const currentQuestion = SAMPLE_QUESTIONS[questionIndex] || null;
-  const currentPassages = currentQuestion
-    ? SAMPLE_PASSAGES[currentQuestion.id] || []
-    : [];
-  const sourcePages = currentQuestion ? [currentQuestion.sourcePage] : [];
-
-  const handleStartSession = (
-    _topicId?: string,
-    mode?: StudyMode,
-    format: SessionFormat = 'quiz'
-  ) => {
-    if (mode) setSelectedMode(mode);
-    setSessionFormat(format);
-    setQuestionIndex(0);
-    setSelectedChoiceId(null);
-    setFreeTextInput('');
-    setSubmissionResult(null);
-    setAiExplanation(null);
-    setAiError(null);
-    setIsSessionCompleted(false);
-    setCurrentScreen('quiz');
+  const modelStatus: ModelRuntimeStatus = {
+    state: 'ready',
+    manifestId: 'qwen2.5-1.5b-csc',
+    modelName: 'Qwen2.5-1.5B-Instruct-Q4_K_M',
+    peakMemoryBytes: 850 * 1024 * 1024,
   };
 
-  const handleSubmitAnswer = () => {
-    if (!currentQuestion) return;
+  // Instantiate clean architecture dependencies once
+  const { controller, repo } = useMemo(() => {
+    const repository = new InMemoryQuestionRepository(
+      SAMPLE_QUESTIONS,
+      INITIAL_TOPICS,
+      SAMPLE_PASSAGES
+    );
+    const llmPort = new LocalMockLlmPort();
+    const logger = new DiagnosticsLogger(50);
 
-    if (currentQuestion.questionType === 'multiple_choice') {
-      if (!selectedChoiceId) return;
-      const scoreResult = scoreMultipleChoice(
-        currentQuestion,
-        selectedChoiceId
-      );
-      setSubmissionResult({
-        attempt: {
-          id: `att-${Date.now()}`,
-          questionId: currentQuestion.id,
-          selectedChoiceId,
-          isCorrect: scoreResult.isCorrect,
-          score: scoreResult.score,
-          durationMs: 1500,
-          answeredAt: new Date().toISOString(),
-        },
-        isCorrect: scoreResult.isCorrect,
-        score: scoreResult.score,
-        canonicalChoiceId: currentQuestion.canonicalChoiceId ?? null,
-        canonicalAnswer: currentQuestion.canonicalAnswer ?? null,
-        canonicalExplanation: currentQuestion.canonicalExplanation ?? null,
+    const getNextQuestion = new GetNextQuestion({ repository });
+    const submitAnswer = new SubmitAnswer(repository);
+    const getExplanationContext = new GetExplanationContext(repository, repository);
+    const explainMore = new ExplainMore(repository, repository, llmPort, logger);
+    const interpretFreeAnswer = new InterpretFreeAnswer(repository, repository, llmPort, logger);
+    const cancelGeneration = new CancelGeneration(logger);
+
+    const sessionController = new ReviewSessionController({
+      getNextQuestion,
+      submitAnswer,
+      getExplanationContext,
+      explainMore,
+      interpretFreeAnswer,
+      cancelGeneration,
+      logger,
+    });
+
+    return { controller: sessionController, repo: repository };
+  }, []);
+
+  const [controllerState, setControllerState] = useState<ReviewSessionState>(
+    controller.getState()
+  );
+
+  useEffect(() => {
+    const unsubscribe = controller.subscribe((newState) => {
+      setControllerState(newState);
+    });
+    return unsubscribe;
+  }, [controller]);
+
+  const refreshTopics = useCallback(async () => {
+    const updated = await repo.getTopicSummaries();
+    setTopicSummaries([...updated]);
+  }, [repo]);
+
+  const handleStartSession = useCallback(
+    async (
+      topicId?: string,
+      mode: StudyMode = 'all',
+      format: SessionFormat = 'quiz'
+    ) => {
+      setActiveTopicId(topicId);
+      setSelectedMode(mode);
+      setSessionFormat(format);
+
+      await controller.startSession({
+        query: { topicId, mode },
+        shuffleChoices: false,
       });
-    } else {
-      const scoreResult = scoreExactIdentification(
-        currentQuestion.canonicalAnswer,
-        freeTextInput
-      );
-      setSubmissionResult({
-        attempt: {
-          id: `att-${Date.now()}`,
-          questionId: currentQuestion.id,
-          freeTextAnswer: freeTextInput,
-          isCorrect: scoreResult.isCorrect,
-          score: scoreResult.score,
-          durationMs: 2000,
-          answeredAt: new Date().toISOString(),
-        },
-        isCorrect: scoreResult.isCorrect,
-        score: scoreResult.score,
-        canonicalChoiceId: currentQuestion.canonicalChoiceId ?? null,
-        canonicalAnswer: currentQuestion.canonicalAnswer ?? null,
-        canonicalExplanation: currentQuestion.canonicalExplanation ?? null,
-      });
-    }
-  };
 
-  const handleRequestExplainMore = (language: 'en' | 'fil') => {
-    if (!currentQuestion) return;
-    setIsGeneratingAi(true);
-    setAiError(null);
-    setTimeout(() => {
-      setIsGeneratingAi(false);
-      if (language === 'fil') {
-        setAiExplanation(
-          `Ayon sa Batas (Pahina ${currentQuestion.sourcePage}), ang opisyal na paliwanag ay: "${currentQuestion.canonicalExplanation}". Ito ay nakapaloob sa mga alituntunin ng Komisyon sa Serbisyo Sibil.`
-        );
-      } else {
-        setAiExplanation(
-          `Grounded on official reference (Page ${currentQuestion.sourcePage}): "${currentQuestion.canonicalExplanation}". This policy is strictly tested in the Philippine Civil Service Examination.`
-        );
-      }
-    }, 600);
-  };
+      setCurrentScreen('quiz');
+    },
+    [controller]
+  );
 
-  const handleNextQuestion = () => {
-    if (questionIndex + 1 < SAMPLE_QUESTIONS.length) {
-      setQuestionIndex(questionIndex + 1);
-      setSelectedChoiceId(null);
-      setFreeTextInput('');
-      setSubmissionResult(null);
-      setAiExplanation(null);
-      setAiError(null);
-    } else {
-      setIsSessionCompleted(true);
-    }
-  };
+  const handleSubmitAnswer = useCallback(async () => {
+    await controller.submitCurrentAnswer();
+    await refreshTopics();
+  }, [controller, refreshTopics]);
 
-  const handleRestartSession = () => {
-    handleStartSession(undefined, selectedMode, sessionFormat);
-  };
+  const handleRateCard = useCallback(
+    async (rating: 'again' | 'know') => {
+      await controller.rateCurrentFlashcard(rating);
+      await refreshTopics();
+    },
+    [controller, refreshTopics]
+  );
 
-  const handleReturnHome = () => {
+  const handleRestartSession = useCallback(() => {
+    handleStartSession(activeTopicId, selectedMode, sessionFormat);
+  }, [handleStartSession, activeTopicId, selectedMode, sessionFormat]);
+
+  const handleReturnHome = useCallback(async () => {
     setCurrentScreen('home');
-    setIsSessionCompleted(false);
-  };
+    await refreshTopics();
+  }, [refreshTopics]);
 
   return (
     <View style={styles.container}>
       <StatusBar barStyle="dark-content" />
       {currentScreen === 'home' ? (
         <ReviewHomeScreen
-          topicSummaries={INITIAL_TOPICS}
+          topicSummaries={topicSummaries}
           selectedMode={selectedMode}
           modelStatus={modelStatus}
           onSelectMode={setSelectedMode}
@@ -352,26 +510,32 @@ export default function App() {
         />
       ) : (
         <QuizReviewScreen
-          question={currentQuestion}
-          questionNumber={questionIndex + 1}
-          totalQuestions={SAMPLE_QUESTIONS.length}
-          selectedChoiceId={selectedChoiceId}
-          freeTextInput={freeTextInput}
-          submissionResult={submissionResult}
-          supportingPassages={currentPassages}
-          sourcePages={sourcePages}
-          aiExplanation={aiExplanation}
+          question={controllerState.currentQuestion}
+          questionNumber={controllerState.currentIndex + 1}
+          totalQuestions={controllerState.totalQuestions}
+          selectedChoiceId={controllerState.selectedChoiceId}
+          freeTextInput={controllerState.freeTextInput}
+          submissionResult={controllerState.submissionResult}
+          supportingPassages={controllerState.supportingPassages}
+          sourcePages={controllerState.sourcePages}
+          aiExplanation={controllerState.aiExplanation}
+          streamingAiText={controllerState.streamingAiText}
+          freeAnswerEvaluation={controllerState.freeAnswerEvaluation}
           modelStatus={modelStatus}
-          isGeneratingAi={isGeneratingAi}
-          aiError={aiError}
-          isSessionCompleted={isSessionCompleted}
+          isGeneratingAi={controllerState.isGeneratingAi}
+          aiError={controllerState.aiError}
+          isSessionCompleted={controllerState.isSessionCompleted}
           sessionFormat={sessionFormat}
-          onSelectChoice={setSelectedChoiceId}
-          onChangeFreeText={setFreeTextInput}
+          onSelectChoice={(id) => controller.selectChoice(id)}
+          onChangeFreeText={(text) => controller.setFreeTextInput(text)}
           onSubmitAnswer={handleSubmitAnswer}
-          onRequestExplainMore={handleRequestExplainMore}
-          onCancelGeneration={() => setIsGeneratingAi(false)}
-          onNextQuestion={handleNextQuestion}
+          onRequestExplainMore={(lang) => controller.requestExplainMore(lang)}
+          onRequestInterpretFreeAnswer={() =>
+            controller.requestFreeAnswerInterpretation()
+          }
+          onCancelGeneration={() => controller.cancelActiveAiGeneration()}
+          onNextQuestion={() => controller.nextQuestion()}
+          onRateCard={handleRateCard}
           onRestartSession={handleRestartSession}
           onReturnHome={handleReturnHome}
         />
@@ -386,4 +550,3 @@ const styles = StyleSheet.create({
     backgroundColor: colors.neutral.surface,
   },
 });
-
