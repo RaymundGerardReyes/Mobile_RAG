@@ -23,6 +23,8 @@ gpu = [
     "transformers>=4.45.0",
     "peft>=0.13.0",
     "bitsandbytes>=0.44.0",
+    "trl>=0.12.0",
+    "datasets>=3.0.0",
 ]
 
 [project.scripts]
@@ -30,7 +32,7 @@ ai-tutor-pipeline = "ai_tutor_training.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", ".", ".."]
 markers = [
     "unit: Isolated pure function, regex, and provenance unit tests.",
     "integration: Subsystem interaction, database operations, and stage handoffs.",

@@ -11,41 +11,49 @@
 
 ## 1. Executive Summary & Architectural Reality
 
-An exhaustive code audit of the frontend codebase in `D:\MobileApp Rag\mobile` reveals a dual-layer architecture:
-1. **Layer 1: The Live Expo App Shell ([`App.tsx`](file:///d:/MobileApp%20Rag/mobile/App.tsx))**
-   - The current active entry point executed by `expo/AppEntry.js`.
-   - Runs directly on local React `useState` hooks with static in-memory mocks (`SAMPLE_QUESTIONS`, `INITIAL_TOPICS`, `SAMPLE_PASSAGES`).
-   - Does **not** import or instantiate the production controller, SQLite repositories, or on-device LLM adapters.
-2. **Layer 2: The Production Clean Architecture Core ([`mobile/src/`](file:///d:/MobileApp%20Rag/mobile/src))**
-   - A fully tested (74/74 passing tests), modular, headless hexagonal architecture.
+An exhaustive code audit of the frontend codebase in `D:\MobileApp Rag\mobile` reveals a **unified live architecture**:
+
+1. **The Live Expo App ([`App.tsx`](file:///d:/MobileApp%20Rag/mobile/App.tsx))**
+   - The active entry point executed by `expo/AppEntry.js`.
+   - Loads **200 authentic Civil Service Exam questions** (4 topics, 68 passages) from the bundled [`live_content_pack.json`](file:///d:/MobileApp%20Rag/mobile/assets/live_content_pack.json), extracted from `reviewer.pdf` via the deterministic training pipeline.
+   - Instantiates the production [`ReviewSessionController`](file:///d:/MobileApp%20Rag/mobile/src/controllers/review_session_controller.ts) with all 9 application use cases (`GetNextQuestion`, `SubmitAnswer`, `GetExplanationContext`, `ExplainMore`, `InterpretFreeAnswer`, `CancelGeneration`).
+   - Uses an `InMemoryQuestionRepository` (implementing both `QuestionRepository` and `PassageRetriever`) that dynamically tracks student attempts and recalculates topic summaries.
+   - LLM port uses `LocalMockLlmPort` for streaming AI explanations (bilingual EN/Filipino) and JSON-schema-compliant rubric verdicts until on-device Qwen adapter is deployed.
+2. **The Production Clean Architecture Core ([`mobile/src/`](file:///d:/MobileApp%20Rag/mobile/src))**
+   - A fully tested (78/78 passing tests), modular, headless hexagonal architecture.
    - Encapsulated within connected UI containers ([`ConnectedReviewHomeScreen`](file:///d:/MobileApp%20Rag/mobile/src/features/review/ReviewHomeScreen.tsx#L295-L338), [`ConnectedQuizReviewScreen`](file:///d:/MobileApp%20Rag/mobile/src/features/quiz/QuizReviewScreen.tsx#L601-L648)), the headless state machine [`ReviewSessionController`](file:///d:/MobileApp%20Rag/mobile/src/controllers/review_session_controller.ts), 9 application use cases, SQLite repositories with FTS5 BM25 search, and an on-device LLM service with 4-tier output validation.
+   - The SQLite adapter path (`ExpoSqliteDatabase` → `SqliteQuestionRepository` / `SqlitePassageRetriever`) is ready for native deployment when the app transitions from Expo Go to a prebuild.
 
 ```mermaid
 flowchart TD
-    subgraph LIVE_EXPO_RUNTIME["Layer 1: Live Expo App (AppEntry.js -> App.tsx)"]
-        APP["App.tsx\n(In-Memory Mock State)"]
+    subgraph LIVE_EXPO_RUNTIME["Live Expo App (AppEntry.js -> App.tsx)"]
+        APP["App.tsx\n(Live Data + ReviewSessionController)"]
         HOME_UI["ReviewHomeScreen.tsx\n(Presentational)"]
         QUIZ_UI["QuizReviewScreen.tsx\n(Presentational)"]
-        MOCK_DATA["Hardcoded Mocks:\nSAMPLE_QUESTIONS\nINITIAL_TOPICS\nSAMPLE_PASSAGES"]
+        LIVE_DATA["live_content_pack.json\n(200 Questions, 68 Passages, 4 Topics)"]
+        REPO["InMemoryQuestionRepository\n(QuestionRepository + PassageRetriever)"]
+        CTRL["ReviewSessionController\n(Pure State Machine)"]
+        USE_CASES["9 Application Use Cases\n(GetNextQuestion, SubmitAnswer, ExplainMore...)"]
+        LLM["LocalMockLlmPort\n(Streaming AI Explanations)"]
         APP --> HOME_UI
         APP --> QUIZ_UI
-        APP -.-> MOCK_DATA
-    end
-
-    subgraph DISCONNECTED_PRODUCTION_CORE["Layer 2: Production Clean Architecture Core (Currently Unmounted)"]
-        CONN_HOME["ConnectedReviewHomeScreen\n(HomeDashboardScreen)"]
-        CONN_QUIZ["ConnectedQuizReviewScreen\n(QuizSessionContainer)"]
-        CTRL["ReviewSessionController.ts\n(Pure State Machine)"]
-        USE_CASES["9 Application Use Cases\n(InitializeApp, GetNextQuestion, SubmitAnswer...)"]
-        DATA_AI["Adapters:\nExpoSqliteDatabase\nSqliteQuestionRepository\nLocalLlmService\nOutputValidator"]
-
-        CONN_HOME --> DATA_AI
-        CONN_QUIZ --> CTRL
+        APP --> CTRL
         CTRL --> USE_CASES
-        USE_CASES --> DATA_AI
+        USE_CASES --> REPO
+        USE_CASES --> LLM
+        REPO -.-> LIVE_DATA
     end
 
-    LIVE_EXPO_RUNTIME -.->|UNCONNECTED\nNot imported in App.tsx| DISCONNECTED_PRODUCTION_CORE
+    subgraph NATIVE_ADAPTERS["Native Adapters (Ready for Prebuild Deployment)"]
+        EXPO_DB["ExpoSqliteDatabase"]
+        SQL_REPO["SqliteQuestionRepository"]
+        SQL_PASS["SqlitePassageRetriever"]
+        LLM_SVC["LocalLlmService\n(On-Device Qwen LoRA)"]
+        EXPO_DB --> SQL_REPO
+        EXPO_DB --> SQL_PASS
+    end
+
+    LIVE_EXPO_RUNTIME -.->|"Swap via DI\n(content_pack.db)"| NATIVE_ADAPTERS
 ```
 
 ---
@@ -63,11 +71,11 @@ The codebase contains **no URL-based routing or Expo Router (`expo-router`)**.
 
 | Requested Concept | Codebase Location | Actual Runtime Status in `App.tsx` | True Architectural Capability |
 | :--- | :--- | :--- | :--- |
-| **`/goal`** | [`ReviewHomeScreen.tsx#L64-L126`](file:///d:/MobileApp%20Rag/mobile/src/features/review/ReviewHomeScreen.tsx)<br>[`sqlite_question_repository.ts#L125-L157`](file:///d:/MobileApp%20Rag/mobile/src/data/sqlite/sqlite_question_repository.ts) | Rendered with static mock `INITIAL_TOPICS`. | Computes subject mastery, answered counts, accuracy badges, and remaining review counts (`"X left"`). |
+| **`/goal`** | [`ReviewHomeScreen.tsx#L64-L126`](file:///d:/MobileApp%20Rag/mobile/src/features/review/ReviewHomeScreen.tsx)<br>[`sqlite_question_repository.ts#L125-L157`](file:///d:/MobileApp%20Rag/mobile/src/data/sqlite/sqlite_question_repository.ts) | **Live.** Renders 4 real subject cards from `live_content_pack.json` via `InMemoryQuestionRepository.getTopicSummaries()`. | Computes subject mastery, answered counts, accuracy badges, and remaining review counts (`"X left"`). |
 | **`/learn`** | [`QuizReviewScreen.tsx#L207-L264`](file:///d:/MobileApp%20Rag/mobile/src/features/quiz/QuizReviewScreen.tsx)<br>[`CorePrimitives.tsx#L618-L685`](file:///d:/MobileApp%20Rag/mobile/src/components/CorePrimitives.tsx) | Rendered when `sessionFormat === 'flashcards'`. | Flip-to-reveal flashcard component. *Note:* Both "Review Again" and "Know It" currently invoke `onNextQuestion` without persisting rating. |
 | **`/plan`** | [`ReviewHomeScreen.tsx#L145-L178`](file:///d:/MobileApp%20Rag/mobile/src/features/review/ReviewHomeScreen.tsx)<br>[`get_next_question.ts#L33-L70`](file:///d:/MobileApp%20Rag/mobile/src/application/use_cases/get_next_question.ts) | Filter selection works in UI (`'all'`, `'unanswered'`, `'weak_areas'`). | Configures question filtering; `GetNextQuestion` runs Mulberry32 PRNG choice shuffling with positional option protection. |
 | **`/grill-me`** | [`QuizReviewScreen.tsx#L267-L427`](file:///d:/MobileApp%20Rag/mobile/src/features/quiz/QuizReviewScreen.tsx)<br>[`scoring.ts#L1-L100`](file:///d:/MobileApp%20Rag/mobile/src/domain/scoring.ts) | Active in `App.tsx` via `scoreMultipleChoice` & `scoreExactIdentification`. | High-intensity quiz with 58pt touch targets, millisecond elapsed timers (`durationMs`), deterministic grading, and textbook evidence cards. |
-| **`/boost`** | [`explain_more.ts`](file:///d:/MobileApp%20Rag/mobile/src/application/use_cases/explain_more.ts)<br>[`interpret_free_answer.ts`](file:///d:/MobileApp%20Rag/mobile/src/application/use_cases/interpret_free_answer.ts)<br>[`output_validator.ts`](file:///d:/MobileApp%20Rag/mobile/src/ai/evaluation/output_validator.ts) | Mocked via 600ms `setTimeout` in `App.tsx`. Rubric button is suppressed. | Token-budgeted (1,024 max) grounded AI explanations and 4-guardrail semantic free-text answer grading. |
+| **`/boost`** | [`explain_more.ts`](file:///d:/MobileApp%20Rag/mobile/src/application/use_cases/explain_more.ts)<br>[`interpret_free_answer.ts`](file:///d:/MobileApp%20Rag/mobile/src/application/use_cases/interpret_free_answer.ts)<br>[`output_validator.ts`](file:///d:/MobileApp%20Rag/mobile/src/ai/evaluation/output_validator.ts) | **Live.** Wired through `ReviewSessionController` → `ExplainMore` / `InterpretFreeAnswer` use cases → `LocalMockLlmPort` (streaming bilingual AI). | Token-budgeted (1,024 max) grounded AI explanations and 4-guardrail semantic free-text answer grading. |
 | **`/teamwork-preview`** | [`ARCHITECTURE.md#L21-L28`](file:///d:/MobileApp%20Rag/ARCHITECTURE.md#L21-L28) | **Explicit Non-Goal.** | Offline, single-user mobile tutor with zero remote servers, cloud sync, or multi-user features. |
 
 ---
@@ -81,26 +89,28 @@ Acts as the top-level container coordinating navigation and user gestures.
 - `currentScreen: 'home' | 'quiz'` (Default: `'home'`).
 - `selectedMode: StudyMode` (`'all' | 'unanswered' | 'weak_areas'`).
 - `sessionFormat: SessionFormat` (`'quiz' | 'flashcards'`).
-- `questionIndex: number` (0-indexed current question pointer).
-- `selectedChoiceId: string | null` (Current choice selection).
-- `freeTextInput: string` (Student's identification answer).
-- `submissionResult: SubmitAnswerResponse | null` (Grading verdict, score, canonical explanation).
-- `isGeneratingAi: boolean` (Loading indicator for AI explanation).
-- `aiExplanation: string | null` (Rendered elaboration text).
-- `aiError: string | null` (Error banner text).
-- `modelStatus: ModelRuntimeStatus` (Mocked status: `{ state: 'loaded', peakMemoryBytes: 850 * 1024 * 1024 }`).
+- `activeTopicId: string | undefined` (Currently selected topic filter).
+- `topicSummaries: TopicSummary[]` (Initialized from `LIVE_TOPICS` — 4 authentic subjects).
+- `controllerState: ReviewSessionState` (Subscribed from `ReviewSessionController` — includes `currentQuestion`, `currentIndex`, `totalQuestions`, `selectedChoiceId`, `freeTextInput`, `submissionResult`, `supportingPassages`, `sourcePages`, `aiExplanation`, `streamingAiText`, `freeAnswerEvaluation`, `isGeneratingAi`, `aiError`, `isSessionCompleted`).
+- `modelStatus: ModelRuntimeStatus` (Simulated status: `{ state: 'ready', peakMemoryBytes: 850 * 1024 * 1024 }`).
+
+#### Dependencies (instantiated via `useMemo`):
+- `InMemoryQuestionRepository` — loaded with `LIVE_QUESTIONS` (200), `LIVE_TOPICS` (4), `LIVE_PASSAGES_MAP` (68 passages mapped to question IDs).
+- `LocalMockLlmPort` — streaming bilingual AI explanations (EN/Filipino) and JSON rubric verdicts.
+- `ReviewSessionController` — wired with `GetNextQuestion`, `SubmitAnswer`, `GetExplanationContext`, `ExplainMore`, `InterpretFreeAnswer`, `CancelGeneration`.
+- `DiagnosticsLogger` — ring buffer (capacity 50) for AI run traces.
 
 #### Event Handlers:
-- `handleStartSession(topicId, format)`: Sets `sessionFormat`, resets index to 0, switches `currentScreen` to `'quiz'`.
-- `handleSubmitAnswer()`: Runs deterministic scoring via `scoreMultipleChoice` or `scoreExactIdentification`. Fakes `durationMs: 1500`.
-- `handleRequestExplainMore(language)`: Fakes generation with a 600ms `setTimeout` returning hardcoded text.
-- `handleNextQuestion()`: Advances `questionIndex` or marks session completed.
-- `handleRestartSession()`: Resets index to 0, clears answers and submissions.
-- `handleReturnHome()`: Returns to `'home'` screen.
+- `handleStartSession(topicId, mode, format)`: Sets `activeTopicId`, `selectedMode`, `sessionFormat`, calls `controller.startSession()`, switches to `'quiz'` screen.
+- `handleSubmitAnswer()`: Delegates to `controller.submitCurrentAnswer()`, then refreshes topic summaries.
+- `handleRateCard(rating)`: Delegates to `controller.rateCurrentFlashcard(rating)`, then refreshes topic summaries.
+- `handleRestartSession()`: Re-invokes `handleStartSession` with current filters.
+- `handleReturnHome()`: Returns to `'home'` screen and refreshes topic summaries.
 
-#### Identified Gaps in `App.tsx`:
-1. `onRequestInterpretFreeAnswer` is **omitted** from `<QuizReviewScreen>` props ([L354-L378](file:///d:/MobileApp%20Rag/mobile/App.tsx#L354-L378)), suppressing the semantic rubric evaluation button.
-2. Direct use of mock arrays (`SAMPLE_QUESTIONS`, `INITIAL_TOPICS`) bypasses SQLite and `ReviewSessionController`.
+#### Current Architecture Notes:
+1. All user interactions flow through `ReviewSessionController` — no direct mock scoring or hardcoded data.
+2. The `onRequestInterpretFreeAnswer` prop is fully wired to `controller.requestFreeAnswerInterpretation()`.
+3. LLM explanations use `LocalMockLlmPort` until on-device Qwen LoRA adapter is deployed. Swap requires only replacing the `LocalLlmPort` implementation.
 
 ---
 
@@ -377,16 +387,15 @@ The test suite covers **100% pure Node.js domain, application, and data logic**.
 
 ---
 
-## 9. Actionable Remediation Plan
+## 9. Remaining Roadmap
 
-To bridge the gap between the prototype UI in `App.tsx` and the production Clean Architecture core:
+`App.tsx` now uses the production `ReviewSessionController` with live data. The following items remain for full native deployment:
 
 | Task # | Area | File(s) to Modify | Exact Required Change |
 | :--- | :--- | :--- | :--- |
-| **1** | **Root Container Wiring** | [`App.tsx`](file:///d:/MobileApp%20Rag/mobile/App.tsx) | Replace mock state with `InitializeApp` use case, instantiate `ReviewSessionController`, and mount `ConnectedReviewHomeScreen` and `ConnectedQuizReviewScreen`. |
-| **2** | **Rubric Button Prop** | [`App.tsx`](file:///d:/MobileApp%20Rag/mobile/App.tsx#L354-L378) | Pass `onRequestInterpretFreeAnswer={() => controller.requestFreeAnswerInterpretation()}` to `<QuizReviewScreen>`. |
+| **1** | **Native SQLite Swap** | [`App.tsx`](file:///d:/MobileApp%20Rag/mobile/App.tsx) | Replace `InMemoryQuestionRepository` with `ExpoSqliteDatabase` → `SqliteQuestionRepository` / `SqlitePassageRetriever` when building a native prebuild (requires `expo-sqlite`). |
+| **2** | **On-Device LLM Adapter** | [`App.tsx`](file:///d:/MobileApp%20Rag/mobile/App.tsx) | Replace `LocalMockLlmPort` with `LocalLlmService` backed by the Qwen LoRA adapter once Stage 5 training is complete and the `.gguf` model is bundled. |
 | **3** | **Real Token Streaming** | [`explain_more.ts`](file:///d:/MobileApp%20Rag/mobile/src/application/use_cases/explain_more.ts)<br>[`review_session_controller.ts`](file:///d:/MobileApp%20Rag/mobile/src/controllers/review_session_controller.ts) | Add `onChunk?: (chunk: string) => void` callback to `ExplainMoreRequest` and pass it from `requestExplainMore` to update `streamingAiText` in real time. |
-| **4** | **Flashcard Engine** | [`QuizReviewScreen.tsx`](file:///d:/MobileApp%20Rag/mobile/src/features/quiz/QuizReviewScreen.tsx#L230-L244)<br>[`review_session_controller.ts`](file:///d:/MobileApp%20Rag/mobile/src/controllers/review_session_controller.ts) | Add `onRateCard: (rating: 'again' | 'know') => void` prop. Persist ratings and re-queue failed cards. |
-| **5** | **Optimize Dashboard Query** | [`sqlite_question_repository.ts`](file:///d:/MobileApp%20Rag/mobile/src/data/sqlite/sqlite_question_repository.ts#L125-L157) | Replace the N+1 loop with a single aggregated `GROUP BY q.topic_id` query. |
-| **6** | **UI Component Tests** | `mobile/tests/components/` | Add React Native testing library (`@testing-library/react-native`) tests for `ReviewHomeScreen`, `QuizReviewScreen`, and `CorePrimitives`. |
+| **4** | **Optimize Dashboard Query** | [`sqlite_question_repository.ts`](file:///d:/MobileApp%20Rag/mobile/src/data/sqlite/sqlite_question_repository.ts#L125-L157) | Replace the N+1 loop with a single aggregated `GROUP BY q.topic_id` query. |
+| **5** | **UI Component Tests** | `mobile/tests/components/` | Add React Native testing library (`@testing-library/react-native`) tests for `ReviewHomeScreen`, `QuizReviewScreen`, and `CorePrimitives`. |
 

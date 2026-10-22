@@ -21,6 +21,8 @@ import {
   borders,
   colors,
   controls,
+  elevation,
+  glass,
   motion,
   radius,
   spacing,
@@ -59,6 +61,8 @@ export function useReducedMotion(): boolean {
 
   return reduceMotion;
 }
+
+export const useReduceMotion = useReducedMotion;
 
 // ============================================================================
 // 1. LAYOUT PRIMITIVES (ScreenContainer, ScreenHeader, SectionHeader, BottomActionBar)
@@ -132,6 +136,63 @@ export const ScreenHeader: React.FC<ScreenHeaderProps> = ({
 }) => {
   return (
     <View style={styles.screenHeader}>
+      <View style={styles.screenHeaderLeft}>
+        {onBack && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Back to ${backLabel}`}
+            hitSlop={12}
+            onPress={onBack}
+            style={({ pressed }) => [
+              styles.backButton,
+              pressed && { opacity: motion.opacity.pressed },
+            ]}
+          >
+            <Text style={styles.backChevron}>‹</Text>
+            <Text style={styles.backLabelText}>{backLabel}</Text>
+          </Pressable>
+        )}
+        <View style={styles.headerTitleContainer}>
+          {subtitle ? (
+            <Text style={styles.screenHeaderOverline} numberOfLines={1}>
+              {subtitle.toUpperCase()}
+            </Text>
+          ) : null}
+          <Text style={styles.screenHeaderTitle} numberOfLines={1}>
+            {title}
+          </Text>
+        </View>
+      </View>
+      {rightElement ? (
+        <View style={styles.screenHeaderRight}>{rightElement}</View>
+      ) : null}
+    </View>
+  );
+};
+
+export interface LiquidGlassTopBarProps {
+  title: string;
+  subtitle?: string;
+  onBack?: () => void;
+  backLabel?: string;
+  rightElement?: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+}
+
+/**
+ * Modern Curved Liquid Glass Navigation Header.
+ * Selective translucent blur overlay with high-contrast typography and Apple HIG 44pt touch targets.
+ */
+export const LiquidGlassTopBar: React.FC<LiquidGlassTopBarProps> = ({
+  title,
+  subtitle,
+  onBack,
+  backLabel = 'Back',
+  rightElement,
+  style,
+}) => {
+  return (
+    <View style={[styles.liquidGlassTopBar, style]}>
       <View style={styles.screenHeaderLeft}>
         {onBack && (
           <Pressable
@@ -1090,12 +1151,28 @@ const styles = StyleSheet.create({
     color: colors.brand.primary,
   },
   bottomActionBar: {
-    backgroundColor: colors.neutral.surfaceElevated,
+    backgroundColor: glass.floatingBar.backgroundColor,
     borderTopWidth: borders.hairline,
-    borderTopColor: colors.neutral.borderSubtle,
+    borderTopColor: glass.floatingBar.borderColor,
     paddingHorizontal: spacing.xl,
     paddingTop: spacing.md,
-    paddingBottom: spacing.xxl,
+    paddingBottom: Platform.OS === 'ios' ? spacing.xl : spacing.md,
+    shadowColor: glass.floatingBar.shadowColor,
+    shadowOffset: glass.floatingBar.shadowOffset,
+    shadowOpacity: glass.floatingBar.shadowOpacity,
+    shadowRadius: glass.floatingBar.shadowRadius,
+    elevation: glass.floatingBar.elevation,
+  },
+  liquidGlassTopBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+    backgroundColor: glass.header.backgroundColor,
+    borderBottomWidth: borders.hairline,
+    borderBottomColor: glass.header.borderColor,
+    minHeight: 56,
   },
   bottomActionInner: {
     width: '100%',
@@ -1104,7 +1181,7 @@ const styles = StyleSheet.create({
     minHeight: controls.buttonHeight,
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.md,
-    borderRadius: radius.md,
+    borderRadius: radius.control,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
@@ -1131,7 +1208,7 @@ const styles = StyleSheet.create({
     minHeight: controls.choiceRowMinHeight,
     paddingHorizontal: spacing.base,
     paddingVertical: spacing.md,
-    borderRadius: radius.md,
+    borderRadius: radius.control,
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: spacing.sm,
@@ -1193,10 +1270,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.neutral.canvas,
     borderColor: colors.neutral.borderSubtle,
     borderWidth: borders.hairline,
-    borderRadius: radius.lg,
+    borderRadius: radius.card,
     padding: spacing.xxl,
     minHeight: 260,
     justifyContent: 'space-between',
+    ...elevation.card,
   },
   flashcardHeaderRow: {
     flexDirection: 'row',
@@ -1245,7 +1323,7 @@ const styles = StyleSheet.create({
   },
   flashcardExplanationBox: {
     backgroundColor: colors.neutral.surface,
-    borderRadius: radius.md,
+    borderRadius: radius.control,
     padding: spacing.md,
     borderWidth: borders.hairline,
     borderColor: colors.neutral.borderSubtle,
@@ -1263,7 +1341,7 @@ const styles = StyleSheet.create({
   feedbackBanner: {
     paddingHorizontal: spacing.base,
     paddingVertical: spacing.md,
-    borderRadius: radius.md,
+    borderRadius: radius.control,
     borderWidth: borders.hairline,
     marginTop: spacing.sm,
     marginBottom: spacing.base,
@@ -1278,11 +1356,12 @@ const styles = StyleSheet.create({
   },
   contentCard: {
     backgroundColor: colors.neutral.canvas,
-    borderRadius: radius.lg,
+    borderRadius: radius.card,
     borderWidth: borders.hairline,
     borderColor: colors.neutral.borderSubtle,
     padding: spacing.base,
     marginBottom: spacing.base,
+    ...elevation.card,
   },
   contentCardHeader: {
     flexDirection: 'row',
@@ -1303,11 +1382,12 @@ const styles = StyleSheet.create({
   evidenceContainer: {
     flexDirection: 'row',
     backgroundColor: colors.neutral.canvas,
-    borderRadius: radius.md,
+    borderRadius: radius.control,
     borderWidth: borders.hairline,
     borderColor: colors.neutral.borderSubtle,
     padding: spacing.md,
     marginBottom: spacing.sm,
+    ...elevation.subtle,
   },
   evidenceAccentBar: {
     width: 3,

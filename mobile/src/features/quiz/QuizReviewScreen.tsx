@@ -10,6 +10,7 @@ import {
   borders,
   colors,
   controls,
+  elevation,
   radius,
   spacing,
   typography,
@@ -21,8 +22,10 @@ import {
   BottomActionBar,
   CSCButton,
   CSCChipBadge,
+  ContentCard,
   EvidenceCard,
   Flashcard,
+  LiquidGlassTopBar,
   ScreenContainer,
   ScreenHeader,
 } from '../../components/CorePrimitives.js';
@@ -115,7 +118,7 @@ export function QuizReviewScreen({
     return (
       <ScreenContainer
         header={
-          <ScreenHeader
+          <LiquidGlassTopBar
             title="Session Summary"
             subtitle="Civil Service Review"
             onBack={onReturnHome}
@@ -213,7 +216,7 @@ export function QuizReviewScreen({
     return (
       <ScreenContainer
         header={
-          <ScreenHeader
+          <LiquidGlassTopBar
             title={`Card ${questionNumber} of ${totalQuestions}`}
             subtitle="Flashcard Recall"
             onBack={onReturnHome}
@@ -298,7 +301,7 @@ export function QuizReviewScreen({
   return (
     <ScreenContainer
       header={
-        <ScreenHeader
+        <LiquidGlassTopBar
           title={`Question ${questionNumber} of ${totalQuestions}`}
           subtitle="Practice Quiz"
           onBack={onReturnHome}
@@ -423,13 +426,15 @@ export function QuizReviewScreen({
           />
 
           {/* Why This Is Correct (Official Canonical Rationale) */}
-          <View style={styles.rationaleBlock}>
-            <Text style={styles.sectionHeading}>Why this is correct</Text>
+          <ContentCard
+            overline="Verified Official Rationale"
+            title="Why this is correct"
+          >
             <Text style={styles.bodyText}>
               {submissionResult.canonicalExplanation ||
                 'Refer to the verified textbook excerpts below.'}
             </Text>
-          </View>
+          </ContentCard>
 
           {/* Supporting Textbook Evidence Passages */}
           {supportingPassages.length > 0 && (
@@ -554,11 +559,22 @@ export function QuizReviewScreen({
 
           {/* On-Device AI Elaboration Output */}
           <View style={styles.divider} />
-          {explanationText && (
-            <View style={styles.aiBox}>
-              <Text style={styles.aiHeading}>AI Tutor Explanation</Text>
-              <Text style={styles.bodyText}>{explanationText}</Text>
-            </View>
+          {(explanationText || isGeneratingAi) && (
+            <ContentCard
+              overline="On-Device Intelligence"
+              title="AI Tutor Explanation"
+              rightBadge={
+                isGeneratingAi ? (
+                  <CSCChipBadge label="Generating..." variant="brand" indicatorDot />
+                ) : (
+                  <CSCChipBadge label="Grounded RAG" variant="success" />
+                )
+              }
+            >
+              <Text style={styles.bodyText}>
+                {explanationText || 'Generating grounded explanation...'}
+              </Text>
+            </ContentCard>
           )}
 
           {aiError && (
@@ -723,7 +739,7 @@ const styles = StyleSheet.create({
     minHeight: 56,
     paddingHorizontal: spacing.base,
     paddingVertical: spacing.md,
-    borderRadius: radius.md,
+    borderRadius: radius.control,
     borderWidth: borders.hairline,
     borderColor: colors.neutral.borderDefault,
     backgroundColor: colors.neutral.surfaceElevated,
@@ -744,11 +760,12 @@ const styles = StyleSheet.create({
   },
   explanationSection: {
     backgroundColor: colors.neutral.surfaceElevated,
-    borderRadius: radius.lg,
+    borderRadius: radius.card,
     borderWidth: borders.hairline,
     borderColor: colors.neutral.borderSubtle,
     padding: spacing.xl,
     gap: spacing.base,
+    ...elevation.card,
   },
   rationaleBlock: {
     gap: spacing.xs,
@@ -801,7 +818,7 @@ const styles = StyleSheet.create({
   },
   rubricResultCard: {
     padding: spacing.md,
-    borderRadius: radius.md,
+    borderRadius: radius.control,
     borderWidth: borders.hairline,
     borderColor: colors.neutral.borderSubtle,
     backgroundColor: colors.neutral.surface,
@@ -864,7 +881,7 @@ const styles = StyleSheet.create({
   },
   errorBox: {
     padding: spacing.md,
-    borderRadius: radius.md,
+    borderRadius: radius.control,
     borderWidth: borders.hairline,
     borderColor: colors.semantic.incorrect.border,
     backgroundColor: colors.semantic.incorrect.surface,
@@ -892,11 +909,12 @@ const styles = StyleSheet.create({
   },
   summarySurface: {
     backgroundColor: colors.neutral.surfaceElevated,
-    borderRadius: radius.lg,
+    borderRadius: radius.card,
     borderWidth: borders.hairline,
     borderColor: colors.neutral.borderSubtle,
     padding: spacing.xxl,
     gap: spacing.md,
+    ...elevation.card,
   },
   summaryOverline: {
     fontSize: typography.caption.fontSize,

@@ -10,6 +10,7 @@ import {
   borders,
   colors,
   controls,
+  elevation,
   radius,
   spacing,
   typography,
@@ -365,11 +366,12 @@ const styles = StyleSheet.create({
   },
   primaryTaskSurface: {
     backgroundColor: colors.neutral.surfaceElevated,
-    borderRadius: radius.lg,
+    borderRadius: radius.hero, // 28pt modern curved hero launchpad
     borderWidth: borders.hairline,
     borderColor: colors.neutral.borderSubtle,
     padding: spacing.xl,
     gap: spacing.md,
+    ...elevation.card,
   },
   taskHeaderRow: {
     flexDirection: 'row',
@@ -390,13 +392,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: colors.neutral.surfaceMuted,
     padding: spacing.xs,
-    borderRadius: radius.md,
+    borderRadius: radius.control, // 14pt curved control
     gap: spacing.xs,
   },
   segmentButton: {
     flex: 1,
     minHeight: controls.minTouchTarget,
-    borderRadius: radius.sm,
+    borderRadius: radius.control,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: spacing.xs,
@@ -423,19 +425,21 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   listGroup: {
-    borderRadius: radius.lg,
+    borderRadius: radius.card, // 22pt curved card
     borderWidth: borders.hairline,
     borderColor: colors.neutral.borderSubtle,
     backgroundColor: colors.neutral.surfaceElevated,
     overflow: 'hidden',
+    ...elevation.card,
   },
   progressSummarySurface: {
     backgroundColor: colors.neutral.surfaceElevated,
-    borderRadius: radius.lg,
+    borderRadius: radius.card, // 22pt curved card
     borderWidth: borders.hairline,
     borderColor: colors.neutral.borderSubtle,
     padding: spacing.base,
     gap: spacing.md,
+    ...elevation.card,
   },
   progressCountLine: {
     flexDirection: 'row',

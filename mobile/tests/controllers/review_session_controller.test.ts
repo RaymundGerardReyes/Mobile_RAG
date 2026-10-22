@@ -536,9 +536,6 @@ describe('ReviewSessionController & SQLite Migration Safeguard', () => {
     });
 
     await controller.startSession({ query: { mode: 'all' } });
-    // Navigate to q_single (which is index 2)
-    controller.nextQuestion();
-    controller.nextQuestion();
     assert.equal(controller.getState().currentQuestion?.id, 'q_single');
 
     // Rating 'again' where no non-canonical choice exists must NOT throw foreign key violation

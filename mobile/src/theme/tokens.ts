@@ -5,6 +5,7 @@
  * - 15% Brand Deep Blue (#2A338F) for primary actions, structural hierarchy, and active states
  * - 5% Focal Accent Red (#EC1C2D) for small emphasis badges and priority indicators ONLY
  *
+ * Modern Curved, Minimal Luxury, Selective Liquid Glass System.
  * Pure TypeScript — zero external UI library dependencies.
  */
 
@@ -69,6 +70,60 @@ export const colors = {
   },
 } as const;
 
+export const darkColors = {
+  neutral: {
+    canvas: '#0B0D17',
+    surface: '#131728',
+    surfaceElevated: '#1C2138',
+    surfaceMuted: '#242A48',
+    textPrimary: '#F7F8FC',
+    textSecondary: '#A2A9B8',
+    textMuted: '#6D7588',
+    borderSubtle: '#28304E',
+    borderDefault: '#323C62',
+    divider: '#232943',
+    borderStrong: '#445082',
+    backdrop: 'rgba(5, 7, 13, 0.75)',
+  },
+  brand: {
+    primary: '#4350C7',
+    dark: '#2A338F',
+    light: '#1F266D',
+    tint: '#181C38',
+    border: '#3F4B9B',
+    contrastText: '#FFFFFF',
+  },
+  accent: {
+    primary: '#FF4554',
+    dark: '#EC1C2D',
+    light: '#3D151B',
+    tint: '#271015',
+    contrastText: '#FFFFFF',
+  },
+  semantic: {
+    correct: {
+      text: '#4ADE80',
+      surface: '#0F291E',
+      border: '#166534',
+    },
+    incorrect: {
+      text: '#F87171',
+      surface: '#331518',
+      border: '#991B1B',
+    },
+    warning: {
+      text: '#FBBF24',
+      surface: '#322310',
+      border: '#92400E',
+    },
+    info: {
+      text: '#60A5FA',
+      surface: '#112240',
+      border: '#1D4ED8',
+    },
+  },
+} as const;
+
 export const spacing = {
   xs: 4,       // space-1: 4pt icon-to-label micro spacing
   sm: 8,       // space-2: 8pt tight internal spacing
@@ -88,6 +143,12 @@ export const radius = {
   lg: 16,    // 16pt: Main structured cards
   xl: 24,    // 24pt: Bottom sheets & large feature panels
   pill: 999, // Fully rounded pills
+  // Modern Curved-Edge Semantic Tokens
+  control: 14,
+  card: 22,
+  hero: 28,
+  sheet: 32,
+  capsule: 999,
 } as const;
 
 export const borders = {
@@ -155,6 +216,82 @@ export const controls = {
   iconLarge: 32,
 } as const;
 
+export const glass = {
+  header: {
+    backgroundColor: 'rgba(255, 255, 255, 0.88)',
+    borderColor: 'rgba(228, 231, 239, 0.75)',
+    borderBottomWidth: 1,
+  },
+  headerDark: {
+    backgroundColor: 'rgba(19, 23, 40, 0.88)',
+    borderColor: 'rgba(40, 48, 78, 0.75)',
+    borderBottomWidth: 1,
+  },
+  floatingBar: {
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    borderColor: 'rgba(228, 231, 239, 0.85)',
+    borderTopWidth: 1,
+    shadowColor: '#191D2E',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  floatingBarDark: {
+    backgroundColor: 'rgba(19, 23, 40, 0.92)',
+    borderColor: 'rgba(40, 48, 78, 0.85)',
+    borderTopWidth: 1,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  cardOverlay: {
+    backgroundColor: 'rgba(255, 255, 255, 0.75)',
+    borderColor: 'rgba(255, 255, 255, 0.9)',
+    borderWidth: 1,
+  },
+} as const;
+
+export const elevation = {
+  flat: {
+    shadowColor: 'transparent',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
+  },
+  subtle: {
+    shadowColor: '#191D2E',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  card: {
+    shadowColor: '#191D2E',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.06,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  floating: {
+    shadowColor: '#191D2E',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.10,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  modal: {
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 16 },
+    shadowOpacity: 0.18,
+    shadowRadius: 32,
+    elevation: 16,
+  },
+} as const;
+
 export const motion = {
   duration: {
     instant: 120,      // 100-140ms: Button presses, icon feedback, opacity changes
@@ -193,6 +330,9 @@ export const motion = {
 
 export type ThemeTokens = {
   colors: typeof colors;
+  darkColors: typeof darkColors;
+  glass: typeof glass;
+  elevation: typeof elevation;
   spacing: typeof spacing;
   radius: typeof radius;
   borders: typeof borders;

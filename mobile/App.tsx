@@ -35,199 +35,21 @@ import {
 } from './src/controllers/review_session_controller.js';
 import { DiagnosticsLogger } from './src/diagnostics/diagnostics_logger.js';
 
-const INITIAL_TOPICS: TopicSummary[] = [
-  {
-    topic: {
-      id: 'ph-constitution-general-info',
-      title: 'Philippine Constitution & General Information',
-      sortOrder: 1,
-    },
-    totalQuestions: 150,
-    answeredCount: 45,
-    correctCount: 40,
-  },
-  {
-    topic: {
-      id: 'verbal-ability',
-      title: 'Verbal Ability (English & Filipino)',
-      sortOrder: 2,
-    },
-    totalQuestions: 200,
-    answeredCount: 120,
-    correctCount: 95,
-  },
-  {
-    topic: {
-      id: 'analytical-reasoning',
-      title: 'Analytical & Logical Reasoning',
-      sortOrder: 3,
-    },
-    totalQuestions: 120,
-    answeredCount: 60,
-    correctCount: 45,
-  },
-  {
-    topic: {
-      id: 'numerical-reasoning',
-      title: 'Numerical Reasoning',
-      sortOrder: 4,
-    },
-    totalQuestions: 100,
-    answeredCount: 30,
-    correctCount: 20,
-  },
-];
+import liveContentPack from './assets/live_content_pack.json' with { type: 'json' };
 
-const SAMPLE_QUESTIONS: Question[] = [
-  {
-    id: 'q0001',
-    topicId: 'ph-constitution-general-info',
-    questionType: 'multiple_choice',
-    stem: 'According to Article II of the 1987 Philippine Constitution, what is the prime duty of the Government?',
-    canonicalExplanation:
-      'Article II, Section 4 declares that the prime duty of the Government is to serve and protect the people.',
-    sourcePage: 12,
-    difficulty: 'medium',
-    contentVersion: '2026.10.1',
-    canonicalChoiceId: 'c0002',
-    canonicalAnswer: 'B',
-    choices: [
-      {
-        id: 'c0001',
-        questionId: 'q0001',
-        choiceKey: 'A',
-        text: 'To collect taxes efficiently',
-        sortOrder: 1,
-      },
-      {
-        id: 'c0002',
-        questionId: 'q0001',
-        choiceKey: 'B',
-        text: 'To serve and protect the people',
-        sortOrder: 2,
-      },
-      {
-        id: 'c0003',
-        questionId: 'q0001',
-        choiceKey: 'C',
-        text: 'To maintain foreign embassies',
-        sortOrder: 3,
-      },
-      {
-        id: 'c0004',
-        questionId: 'q0001',
-        choiceKey: 'D',
-        text: 'To regulate private enterprises',
-        sortOrder: 4,
-      },
-    ],
-  },
-  {
-    id: 'q0002',
-    topicId: 'ph-constitution-general-info',
-    questionType: 'multiple_choice',
-    stem: 'Under R.A. 6713, within how many days must public officials respond to letters and requests sent by the public?',
-    canonicalExplanation:
-      'Section 5(a) of R.A. 6713 mandates an official response within fifteen (15) working days from receipt.',
-    sourcePage: 28,
-    difficulty: 'medium',
-    contentVersion: '2026.10.1',
-    canonicalChoiceId: 'c0006',
-    canonicalAnswer: 'B',
-    choices: [
-      {
-        id: 'c0005',
-        questionId: 'q0002',
-        choiceKey: 'A',
-        text: '10 working days',
-        sortOrder: 1,
-      },
-      {
-        id: 'c0006',
-        questionId: 'q0002',
-        choiceKey: 'B',
-        text: '15 working days',
-        sortOrder: 2,
-      },
-      {
-        id: 'c0007',
-        questionId: 'q0002',
-        choiceKey: 'C',
-        text: '30 working days',
-        sortOrder: 3,
-      },
-      {
-        id: 'c0008',
-        questionId: 'q0002',
-        choiceKey: 'D',
-        text: '45 working days',
-        sortOrder: 4,
-      },
-    ],
-  },
-  {
-    id: 'q0003',
-    topicId: 'ph-constitution-general-info',
-    questionType: 'identification',
-    stem: 'What is the title of Republic Act No. 6713?',
-    canonicalExplanation:
-      'R.A. 6713 is the Code of Conduct and Ethical Standards for Public Officials and Employees.',
-    sourcePage: 26,
-    difficulty: 'hard',
-    contentVersion: '2026.10.1',
-    canonicalAnswer:
-      'Code of Conduct and Ethical Standards for Public Officials and Employees',
-    choices: [],
-  },
-];
-
-const SAMPLE_PASSAGES: Record<string, RetrievedPassage[]> = {
-  q0001: [
-    {
-      passage: {
-        id: 'p0012',
-        chapter: '1987 Constitution',
-        section: 'Article II: Declaration of Principles and State Policies',
-        startPage: 12,
-        endPage: 12,
-        text: 'Section 4. The prime duty of the Government is to serve and protect the people. The Government may call upon the people to defend the State and, in the fulfillment thereof, all citizens may be required, under conditions provided by law, to render personal military or civil service.',
-        contentHash: 'hash_p0012',
-      },
-      strategy: 'linked',
+const LIVE_TOPICS: TopicSummary[] = (liveContentPack.topicSummaries || []) as TopicSummary[];
+const LIVE_QUESTIONS: Question[] = (liveContentPack.questions || []) as unknown as Question[];
+const LIVE_PASSAGES_MAP: Record<string, RetrievedPassage[]> = Object.fromEntries(
+  Object.entries(liveContentPack.questionPassagesMap || {}).map(([qId, passages]) => [
+    qId,
+    (passages as Array<{ passage: any; source?: string; relevanceScore?: number }>).map((p) => ({
+      passage: p.passage,
+      strategy: (p.source === 'linked' ? 'linked' : 'fts5') as 'linked' | 'fts5',
       confidence: 'high',
-    },
-  ],
-  q0002: [
-    {
-      passage: {
-        id: 'p0028',
-        chapter: 'Republic Act No. 6713',
-        section: 'Duties of Public Officials and Employees',
-        startPage: 28,
-        endPage: 28,
-        text: 'Section 5. In the performance of their duties, all public officials and employees are under obligation to: (a) Act promptly on letters and requests. - All public officials and employees shall, within fifteen (15) working days from receipt thereof, respond to letters, telegrams or other means of communications sent by the public.',
-        contentHash: 'hash_p0028',
-      },
-      strategy: 'linked',
-      confidence: 'high',
-    },
-  ],
-  q0003: [
-    {
-      passage: {
-        id: 'p0026',
-        chapter: 'Republic Act No. 6713',
-        section: 'Title and Policy',
-        startPage: 26,
-        endPage: 26,
-        text: 'Section 1. Title. - This Act shall be known as the "Code of Conduct and Ethical Standards for Public Officials and Employees."',
-        contentHash: 'hash_p0026',
-      },
-      strategy: 'linked',
-      confidence: 'high',
-    },
-  ],
-};
+      rank: 1,
+    })),
+  ])
+);
 
 /**
  * In-memory repository implementing QuestionRepository & PassageRetriever.
@@ -400,7 +222,7 @@ export default function App() {
   const [selectedMode, setSelectedMode] = useState<StudyMode>('all');
   const [sessionFormat, setSessionFormat] = useState<SessionFormat>('quiz');
   const [activeTopicId, setActiveTopicId] = useState<string | undefined>(undefined);
-  const [topicSummaries, setTopicSummaries] = useState<TopicSummary[]>(INITIAL_TOPICS);
+  const [topicSummaries, setTopicSummaries] = useState<TopicSummary[]>(LIVE_TOPICS);
 
   const modelStatus: ModelRuntimeStatus = {
     state: 'ready',
@@ -412,9 +234,9 @@ export default function App() {
   // Instantiate clean architecture dependencies once
   const { controller, repo } = useMemo(() => {
     const repository = new InMemoryQuestionRepository(
-      SAMPLE_QUESTIONS,
-      INITIAL_TOPICS,
-      SAMPLE_PASSAGES
+      LIVE_QUESTIONS,
+      LIVE_TOPICS,
+      LIVE_PASSAGES_MAP
     );
     const llmPort = new LocalMockLlmPort();
     const logger = new DiagnosticsLogger(50);

@@ -1,13 +1,33 @@
 #!/usr/bin/env python3
 """Multi-Subject Data Annotator & RAG Training Preparation Script.
 
-Reuses the `ai_tutor_training` package to:
-1. Programmatically annotate multi-subject questions across 4 Civil Service Exam domains
+╔═══════════════════════════════════════════════════════════════════════╗
+║  THIS IS AN AUTHORING SDK DEMO — NOT THE PRODUCTION PIPELINE        ║
+║                                                                     ║
+║  This script demonstrates the DatasetAnnotator API with 4 hand-     ║
+║  crafted sample questions. It is useful as a template for adding     ║
+║  new subjects programmatically.                                     ║
+║                                                                     ║
+║  PRODUCTION DATASET COMPILATION uses the full reviewer.pdf and      ║
+║  runs through:                                                      ║
+║    1. ai-tutor-pipeline run-all  (Stages 1–4)                       ║
+║    2. training/scripts/prepare_reviewer_sft.py  (Stage 5 ChatML)    ║
+║    3. training/scripts/train_reviewer_lora.py   (Stage 5 LoRA)      ║
+║                                                                     ║
+║  Production artifacts (200 questions, 68 passages, 4 topics):       ║
+║    • training/artifacts/content_pack.db                             ║
+║    • training/artifacts/reviewer_sft_chatml.jsonl                   ║
+║    • mobile/assets/content_pack.db                                  ║
+║    • mobile/assets/live_content_pack.json                           ║
+╚═══════════════════════════════════════════════════════════════════════╝
+
+Demonstrates the `ai_tutor_training` annotation SDK by:
+1. Programmatically annotating sample questions across 4 Civil Service Exam domains
    (General Information, Ethics R.A. 6713, Filipino Balarila, Numerical Ability).
-2. Validate all records against `contracts/*.schema.json`.
-3. Compile the validated artifacts into an SQLite `content_pack.db` with FTS5 search.
-4. Export Grounded RAG Instruction Fine-Tuning datasets in ChatML format.
-5. Run a live demonstration of the 3-Tier Progressive Iterative RAG Justification Engine.
+2. Validating all records against `contracts/*.schema.json`.
+3. Compiling the validated artifacts into an SQLite `content_pack.db` with FTS5 search.
+4. Exporting Grounded RAG Instruction Fine-Tuning datasets in ChatML format.
+5. Running a live demonstration of the 3-Tier Progressive Iterative RAG Justification Engine.
 """
 
 from __future__ import annotations
