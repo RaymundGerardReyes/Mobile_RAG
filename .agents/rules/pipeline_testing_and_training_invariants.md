@@ -54,3 +54,4 @@ Jupyter Notebooks frequently bitrot due to hidden interactive state, missing dep
   2. Asserts that all required stages are present in Markdown headers.
   3. Compiles code cell strings to verify Python syntax.
   4. Executes cells sequentially in an isolated namespace dictionary to verify end-to-end execution without errors.
+
