@@ -129,6 +129,33 @@ class DatasetAnnotator:
         self.questions.append(record)
         return record
 
+    def load_from_jsonl(self, questions_path: Path | str, passages_path: Path | str) -> tuple[int, int]:
+        """Load and validate existing questions and passages from JSONL files."""
+        q_file = Path(questions_path)
+        p_file = Path(passages_path)
+
+        self.passages = []
+        with p_file.open("r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    rec = json.loads(line)
+                    errors = validate_record_against_schema(rec, self.passage_schema)
+                    if errors:
+                        raise ValueError(f"Passage {rec.get('passage_id')} failed contract validation: {errors}")
+                    self.passages.append(rec)
+
+        self.questions = []
+        with q_file.open("r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    rec = json.loads(line)
+                    errors = validate_record_against_schema(rec, self.question_schema)
+                    if errors:
+                        raise ValueError(f"Question {rec.get('question_id')} failed contract validation: {errors}")
+                    self.questions.append(rec)
+
+        return len(self.questions), len(self.passages)
+
     def export_artifacts(self, output_dir: Path | str) -> tuple[Path, Path]:
         """Write validated passages.jsonl and linked_questions.jsonl atomically to disk."""
         target_dir = Path(output_dir)

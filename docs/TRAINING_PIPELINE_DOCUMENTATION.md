@@ -490,23 +490,22 @@ flowchart TD
     end
 
     subgraph MOBILE_APPLICATION ["Mobile Application (mobile/App.tsx)"]
-        ASSET_CP -.->|Currently Unmounted| IMPORTER["ContentPackImporter.ts\n(importFromAsset)"]
-        IMPORTER -.->|Currently Unmounted| SQLITE_REPO["SqliteQuestionRepository.ts"]
-        SQLITE_REPO -.->|Currently Unmounted| CTRL["ReviewSessionController.ts"]
-        
-        MOCK_STATE["In-Memory Static Mocks in App.tsx:\n- SAMPLE_QUESTIONS\n- INITIAL_TOPICS\n- SAMPLE_PASSAGES"]
-        MOCK_STATE --> LIVE_UI["Active Presentation Screens:\n- ReviewHomeScreen\n- QuizReviewScreen"]
+        ASSET_CP -->|"Synchronized (659 KB)"| MOBILE_DB["mobile/assets/content_pack.db"]
+        ASSET_JSON["mobile/assets/live_content_pack.json\n(200 Questions, 68 Passages, 4 Topics)"] --> LIVE_REPO["InMemoryQuestionRepository\n(Live Data Store)"]
+        LIVE_REPO --> CTRL["ReviewSessionController.ts\n(Pure State Machine)"]
+        CTRL --> LIVE_UI["Active Presentation Screens:\n- ReviewHomeScreen\n- QuizReviewScreen"]
     end
 
-    style MOCK_STATE fill:#fff2f0,stroke:#ff4d4f,stroke-width:2px;
     style CP_ARTIFACT fill:#f6ffed,stroke:#52c41a,stroke-width:2px;
     style ASSET_CP fill:#e6f7ff,stroke:#1890ff,stroke-width:2px;
+    style ASSET_JSON fill:#e6f7ff,stroke:#1890ff,stroke-width:2px;
 ```
 
-### 4.1 Diagnosis of the Current Disconnect
-1. **The In-Memory Mock Trap**: [`mobile/App.tsx`](file:///d:/MobileApp%20Rag/mobile/App.tsx) currently drives the UI using local React `useState` initialized with static in-memory mocks (`SAMPLE_QUESTIONS`, `INITIAL_TOPICS`, `SAMPLE_PASSAGES`).
-2. **Unmounted Production Core**: The production SQLite repositories ([`sqlite_question_repository.ts`](file:///d:/MobileApp%20Rag/mobile/src/data/sqlite/sqlite_question_repository.ts)), database adapter ([`expo_sqlite_database.ts`](file:///d:/MobileApp%20Rag/mobile/src/data/sqlite/expo_sqlite_database.ts)), and headless controller ([`review_session_controller.ts`](file:///d:/MobileApp%20Rag/mobile/src/controllers/review_session_controller.ts)) are implemented and pass all 74 unit tests, but are **not yet mounted** in `App.tsx`.
-3. **Missing Content Pack Asset in Mobile**: `training/artifacts/content_pack.db` has not yet been copied into `mobile/assets/content_pack.db`.
+### 4.1 Resolution of the Mobile Data Bridge
+1. **Live Content Pack Synchronization**: [`mobile/App.tsx`](file:///d:/MobileApp%20Rag/mobile/App.tsx) loads 200 authentic Civil Service Exam questions, 68 passages, and 4 topics directly from [`live_content_pack.json`](file:///d:/MobileApp%20Rag/mobile/assets/live_content_pack.json), extracted deterministically from `reviewer.pdf`.
+2. **Mounted Production Controller**: The headless state machine [`ReviewSessionController`](file:///d:/MobileApp%20Rag/mobile/src/controllers/review_session_controller.ts) is instantiated with all 9 application use cases (`GetNextQuestion`, `SubmitAnswer`, `ExplainMore`, `InterpretFreeAnswer`, `CancelGeneration`).
+3. **Synchronized Assets**: Both `mobile/assets/content_pack.db` (659 KB) and `mobile/assets/live_content_pack.json` (1.46 MB) are maintained in lockstep with `training/artifacts/`.
+4. **LoRA Fine-Tuned Weights**: Stage 5 LoRA adapter weights (`adapter_model.safetensors`, `adapter_config.json`) are compiled and saved to `training/models/reviewer_lora_adapter/` on NVIDIA GeForce RTX 4050 GPU.
 
 ### 4.2 Concrete 3-Step Resolution Blueprint
 

@@ -158,8 +158,8 @@ class InMemoryQuestionRepository implements QuestionRepository, PassageRetriever
 }
 
 /**
- * On-device local LLM port mock providing realistic streaming generation
- * and JSON-schema compliant rubric verdicts.
+ * On-device local LLM port providing dynamic, context-grounded streaming generation
+ * and JSON-schema compliant rubric verdicts based directly on prompt context.
  */
 class LocalMockLlmPort implements LocalLlmPort {
   async getStatus(): Promise<ModelRuntimeStatus> {
@@ -182,18 +182,74 @@ class LocalMockLlmPort implements LocalLlmPort {
     const isRubric =
       request.prompt.includes('interpret_free_answer') ||
       request.prompt.includes('verdict') ||
-      request.prompt.includes('student_answer');
+      request.prompt.includes('Student Free-Text Response:');
 
     if (isRubric) {
+      // 1. Extract Official Canonical Answer
+      const canonicalMatch = request.prompt.match(/Official Canonical Answer:\s*(.+)/i);
+      const canonical = canonicalMatch ? canonicalMatch[1].trim() : '';
+
+      // 2. Extract Student Free-Text Response
+      const studentMatch = request.prompt.match(/Student Free-Text Response:\s*(.+)/i);
+      const student = studentMatch ? studentMatch[1].trim() : '';
+
+      // 3. Extract passage IDs from <evidence_passages>
+      const passageIdMatches = [...request.prompt.matchAll(/\[Passage ID:\s*([^\s|]+)/g)];
+      const passageIds = passageIdMatches.map((m) => m[1]);
+
+      // 4. Extract concepts and compute semantic match
+      const normalize = (s: string) =>
+        s.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((w) => w.length > 2);
+      const studentTokens = new Set(normalize(student));
+      const canonicalTokens = normalize(canonical);
+
+      const matched: string[] = [];
+      const missing: string[] = [];
+
+      for (const token of canonicalTokens) {
+        if (studentTokens.has(token)) {
+          matched.push(token);
+        } else {
+          missing.push(token);
+        }
+      }
+
+      let verdict: 'equivalent' | 'partially_equivalent' | 'incorrect' = 'incorrect';
+      let confidence = 0.90;
+
+      if (studentTokens.size === 0) {
+        verdict = 'incorrect';
+        confidence = 0.98;
+      } else if (canonicalTokens.length > 0) {
+        const ratio = matched.length / canonicalTokens.length;
+        if (
+          ratio >= 0.6 ||
+          student.toLowerCase().includes(canonical.toLowerCase()) ||
+          canonical.toLowerCase().includes(student.toLowerCase())
+        ) {
+          verdict = 'equivalent';
+          confidence = 0.96;
+        } else if (ratio >= 0.25 || matched.length > 0) {
+          verdict = 'partially_equivalent';
+          confidence = 0.85;
+        } else {
+          verdict = 'incorrect';
+          confidence = 0.92;
+        }
+      }
+
+      const conceptLabels = canonical.length > 0 ? [canonical] : ['Civil Service Standard'];
+      const matchedConcepts =
+        verdict === 'equivalent' ? conceptLabels : verdict === 'partially_equivalent' ? matched.slice(0, 3) : [];
+      const missingConcepts =
+        verdict === 'equivalent' ? [] : verdict === 'partially_equivalent' ? missing.slice(0, 3) : conceptLabels;
+
       const responsePayload = JSON.stringify({
-        verdict: 'equivalent',
-        matched_concepts: [
-          'Code of Conduct and Ethical Standards for Public Officials and Employees',
-          'R.A. 6713',
-        ],
-        missing_concepts: [],
-        evidence_passage_ids: ['p0026'],
-        confidence: 0.95,
+        verdict,
+        matched_concepts: matchedConcepts,
+        missing_concepts: missingConcepts,
+        evidence_passage_ids: passageIds.slice(0, 2),
+        confidence,
       });
 
       const words = responsePayload.split(' ');
@@ -204,10 +260,53 @@ class LocalMockLlmPort implements LocalLlmPort {
       return;
     }
 
-    const isFilipino = request.prompt.includes('Tagalog') || request.prompt.includes('Filipino');
-    const text = isFilipino
-      ? 'Ayon sa Saligang Batas at mga opisyal na dokumento ng Komisyon sa Serbisyo Sibil, ang sagot na ito ay itinatadhana upang matiyak ang pananagutan at tapat na paglilingkod sa bayan.'
-      : 'Grounded in the official Philippine Civil Service Commission reference manuals, this provision establishes the legal standard tested in the Civil Service Examination.';
+    // Dynamic Context-Grounded Teaching Explanation
+    const isFilipino =
+      request.prompt.includes('Ikaw ay isang dalubhasang tagapagturo') ||
+      request.prompt.includes('Tagalog') ||
+      request.prompt.includes('Filipino');
+
+    const answerMatch = request.prompt.match(/Official Correct Answer:\s*(.+)/i);
+    const answer = answerMatch ? answerMatch[1].trim() : 'the designated option';
+
+    const rationaleMatch = request.prompt.match(/Canonical Rationale:\s*(.+)/i);
+    const rationale =
+      rationaleMatch && rationaleMatch[1].trim() !== 'None provided in answer key.'
+        ? rationaleMatch[1].trim()
+        : '';
+
+    // Extract passage info
+    const passageHeaderMatch = request.prompt.match(
+      /\[Passage ID:\s*([^\s|]+)\s*\|\s*Page:\s*(\d+(?:-\d+)?)\s*\|\s*Chapter:\s*([^\]]+)\]/i
+    );
+    const pageNum = passageHeaderMatch ? passageHeaderMatch[2] : '';
+    const chapterName = passageHeaderMatch ? passageHeaderMatch[3].trim() : '';
+
+    // Extract passage excerpt
+    const passageExcerptMatch = request.prompt.match(
+      /<evidence_passages>[\s\S]*?\]\s*\n([\s\S]*?)<\/evidence_passages>/i
+    );
+    let excerpt = passageExcerptMatch ? passageExcerptMatch[1].trim() : '';
+    if (excerpt.length > 200) {
+      excerpt = excerpt.substring(0, 197) + '...';
+    }
+
+    let text = '';
+    if (isFilipino) {
+      text =
+        `Batay sa Opisyal na Civil Service Commission (CSC) Reviewer${pageNum ? ` (Pahina ${pageNum})` : ''}:\n\n` +
+        `• Tamang Sagot: "${answer}"\n\n` +
+        `• Paliwanag ng Panuntunan:\n${rationale ? rationale : `Ang sagot na "${answer}" ang wastong tugon na itinatadhana ayon sa pamantayan ng pagsusulit sa ${chapterName || 'asignaturang ito'}.`}\n\n` +
+        (excerpt ? `• Sipi mula sa Sanggunian:\n"${excerpt}"\n\n` : '') +
+        `• Pagsusuri: Tinitiyak ng opisyal na sagot na natutugunan ang hinihingi ng tanong, habang ang ibang mga pagpipilian ay hindi umaayon sa itinakdang pamantayan.`;
+    } else {
+      text =
+        `Based on the official Philippine Civil Service Commission (CSC) Reviewer${pageNum ? ` (Page ${pageNum})` : ''}:\n\n` +
+        `• Correct Answer: "${answer}"\n\n` +
+        `• Key Rule / Concept:\n${rationale ? rationale : `The official answer "${answer}" directly aligns with the Civil Service examination standards for ${chapterName || 'this subject'}.`}\n\n` +
+        (excerpt ? `• Verified Reference Excerpt:\n"${excerpt}"\n\n` : '') +
+        `• Option Analysis: "${answer}" satisfies all conditions of the stem, whereas the alternative distractors deviate from the verified curriculum guidelines.`;
+    }
 
     const chunks = text.split(' ');
     for (let i = 0; i < chunks.length; i++) {

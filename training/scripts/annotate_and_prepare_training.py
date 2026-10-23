@@ -1,37 +1,21 @@
 #!/usr/bin/env python3
 """Multi-Subject Data Annotator & RAG Training Preparation Script.
 
-╔═══════════════════════════════════════════════════════════════════════╗
-║  THIS IS AN AUTHORING SDK DEMO — NOT THE PRODUCTION PIPELINE        ║
-║                                                                     ║
-║  This script demonstrates the DatasetAnnotator API with 4 hand-     ║
-║  crafted sample questions. It is useful as a template for adding     ║
-║  new subjects programmatically.                                     ║
-║                                                                     ║
-║  PRODUCTION DATASET COMPILATION uses the full reviewer.pdf and      ║
-║  runs through:                                                      ║
-║    1. ai-tutor-pipeline run-all  (Stages 1–4)                       ║
-║    2. training/scripts/prepare_reviewer_sft.py  (Stage 5 ChatML)    ║
-║    3. training/scripts/train_reviewer_lora.py   (Stage 5 LoRA)      ║
-║                                                                     ║
-║  Production artifacts (200 questions, 68 passages, 4 topics):       ║
-║    • training/artifacts/content_pack.db                             ║
-║    • training/artifacts/reviewer_sft_chatml.jsonl                   ║
-║    • mobile/assets/content_pack.db                                  ║
-║    • mobile/assets/live_content_pack.json                           ║
-╚═══════════════════════════════════════════════════════════════════════╝
-
-Demonstrates the `ai_tutor_training` annotation SDK by:
-1. Programmatically annotating sample questions across 4 Civil Service Exam domains
-   (General Information, Ethics R.A. 6713, Filipino Balarila, Numerical Ability).
-2. Validating all records against `contracts/*.schema.json`.
-3. Compiling the validated artifacts into an SQLite `content_pack.db` with FTS5 search.
-4. Exporting Grounded RAG Instruction Fine-Tuning datasets in ChatML format.
-5. Running a live demonstration of the 3-Tier Progressive Iterative RAG Justification Engine.
+Supports both:
+1. Live Production Ingestion (`--mode live`, default):
+   Loads, validates, and compiles all 200 authentic Civil Service Exam questions
+   and 68 passages from `reviewer.pdf` / `linked_questions.jsonl`, compiles
+   the SQLite `content_pack.db` with FTS5 search, exports ChatML SFT data,
+   and runs a live demonstration of the 3-Tier Progressive Iterative RAG engine
+   on authentic exam items.
+2. Authoring SDK Demonstration (`--mode demo`):
+   Demonstrates the programmatic `DatasetAnnotator` API with hand-crafted sample
+   questions across 4 exam domains.
 """
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -43,17 +27,91 @@ from ai_tutor_training.annotation import DatasetAnnotator
 from ai_tutor_training.iterative_justifier import IterativeRAGJustifier
 
 
-def main() -> None:
-    contracts_dir = REPO_ROOT / "contracts"
-    output_dir = REPO_ROOT / "training" / "artifacts" / "annotated_custom"
-    output_dir.mkdir(parents=True, exist_ok=True)
-
+def run_live_pipeline(
+    contracts_dir: Path,
+    output_dir: Path,
+    questions_path: Path,
+    passages_path: Path,
+) -> None:
+    """Execute live data validation, compilation, and iterative RAG demonstration."""
     print("======================================================================")
-    print(" 1. Initializing Multi-Subject Dataset Annotator")
+    print(" 1. Initializing Live Dataset Annotator with Authentic Reviewer Data")
     print("======================================================================")
     annotator = DatasetAnnotator(contracts_dir=contracts_dir, content_version="2026.10.1")
 
-    # --- Subject 1: General Information / 1987 Philippine Constitution (Multiple Choice) ---
+    print(f"Loading live questions: {questions_path}")
+    print(f"Loading live passages:  {passages_path}")
+    q_count, p_count = annotator.load_from_jsonl(questions_path, passages_path)
+    print(f" [PASS] Loaded & validated {q_count} authentic questions and {p_count} passages against JSON schemas.")
+
+    # 1. Export validated JSONL artifacts
+    print("\n======================================================================")
+    print(" 2. Exporting Schema-Validated JSONL Artifacts")
+    print("======================================================================")
+    q_out, p_out = annotator.export_artifacts(output_dir)
+    print(f" [PASS] Validated Questions JSONL: {q_out}")
+    print(f" [PASS] Validated Passages JSONL:  {p_out}")
+
+    # 2. Compile SQLite Content Pack with FTS5
+    print("\n======================================================================")
+    print(" 3. Compiling SQLite Content Pack with FTS5 Virtual Table")
+    print("======================================================================")
+    db_path = annotator.compile_content_pack(output_dir / "content_pack.db", q_out, p_out)
+    print(f" [PASS] SQLite Content Pack:       {db_path}")
+
+    # 3. Export ChatML format SFT training dataset
+    print("\n======================================================================")
+    print(" 4. Exporting Grounded RAG SFT Dataset (ChatML Format)")
+    print("======================================================================")
+    sft_path = annotator.export_sft_chatml_jsonl(output_dir / "reviewer_sft_chatml.jsonl")
+    print(f" [PASS] ChatML SFT Dataset:        {sft_path}")
+
+    # 4. Live demonstration of 3-Tier Progressive Iterative RAG Engine
+    print("\n======================================================================")
+    print(" 5. Running 3-Tier Progressive Iterative RAG Justification Engine Demo")
+    print("======================================================================")
+    justifier = IterativeRAGJustifier(db_path=db_path, max_evidence_passages=2)
+
+    # Use first live question for live RAG demonstration
+    first_q = annotator.questions[0]
+    target_q_id = first_q["question_id"]
+    stem = first_q["stem"]
+    choices = first_q.get("choices") or []
+    distractor_key = "B" if choices and len(choices) > 1 else None
+    distractor_text = choices[1]["text"] if choices and len(choices) > 1 else "alternative"
+
+    result = justifier.justify_answer(
+        question_id=target_q_id,
+        follow_up_query=f"Why is Choice {distractor_key} ({distractor_text}) not the correct answer for this question?",
+        distractor_choice_key=distractor_key,
+    )
+
+    print(f"Target Question: [{result.question_id}] {result.stem}")
+    print(f"Official Answer: {result.canonical_answer}")
+    print("\nSearch Execution Trace:")
+    for step in result.iterations_run:
+        print(f"  • {step}")
+
+    print(f"\nEvidence Retrieved ({len(result.evidence_found)} passages):")
+    for ev in result.evidence_found:
+        print(f"  [{ev.passage_id}] {ev.chapter} (Page {ev.start_page}) — {ev.retrieval_tier}")
+        print(f"    Text: {ev.text[:120]}...")
+
+    print("\nConstructed Grounded Prompt for Local Qwen Model:")
+    print("----------------------------------------------------------------------")
+    print(result.final_prompt[:450] + "\n... [TRUNCATED] ...\n" + result.final_prompt[-250:])
+    print("----------------------------------------------------------------------")
+    print(f"\n[SUCCESS] Authentic Civil Service Reviewer Data ({q_count} questions) compiled & verified.")
+
+
+def run_demo_pipeline(contracts_dir: Path, output_dir: Path) -> None:
+    """Execute 4-subject authoring SDK demo."""
+    print("======================================================================")
+    print(" 1. Initializing Multi-Subject Dataset Annotator (Authoring SDK Demo)")
+    print("======================================================================")
+    annotator = DatasetAnnotator(contracts_dir=contracts_dir, content_version="2026.10.1")
+
+    # Subject 1: General Information / 1987 Philippine Constitution (Multiple Choice)
     annotator.add_passage(
         chapter="General Information",
         section="1987 Philippine Constitution - Article VI",
@@ -85,7 +143,7 @@ def main() -> None:
         link_confidence="verified",
     )
 
-    # --- Subject 2: Civil Service Ethics & R.A. 6713 (Identification) ---
+    # Subject 2: Civil Service Ethics & R.A. 6713 (Identification)
     annotator.add_passage(
         chapter="Civil Service Ethics",
         section="Code of Conduct (R.A. 6713)",
@@ -111,7 +169,7 @@ def main() -> None:
         link_confidence="verified",
     )
 
-    # --- Subject 3: Filipino / Wika at Balarila (Essay) ---
+    # Subject 3: Filipino / Wika at Balarila (Essay)
     annotator.add_passage(
         chapter="Filipino",
         section="Wika at Balarila",
@@ -137,7 +195,7 @@ def main() -> None:
         link_confidence="verified",
     )
 
-    # --- Subject 4: Numerical Ability (Multiple Choice) ---
+    # Subject 4: Numerical Ability (Multiple Choice)
     annotator.add_passage(
         chapter="Numerical Ability",
         section="Percentage and Fractions",
@@ -167,59 +225,73 @@ def main() -> None:
         link_confidence="verified",
     )
 
-    # 1. Export validated JSONL artifacts
-    print("\n======================================================================")
-    print(" 2. Exporting Schema-Validated JSONL Artifacts")
-    print("======================================================================")
     q_path, p_path = annotator.export_artifacts(output_dir)
     print(f" [PASS] Validated Questions JSONL: {q_path}")
     print(f" [PASS] Validated Passages JSONL:  {p_path}")
 
-    # 2. Compile SQLite Content Pack with FTS5
-    print("\n======================================================================")
-    print(" 3. Compiling SQLite Content Pack with FTS5 Virtual Table")
-    print("======================================================================")
     db_path = annotator.compile_content_pack(output_dir / "content_pack.db", q_path, p_path)
     print(f" [PASS] SQLite Content Pack:       {db_path}")
 
-    # 3. Export ChatML format SFT training dataset
-    print("\n======================================================================")
-    print(" 4. Exporting Grounded RAG SFT Dataset (ChatML Format)")
-    print("======================================================================")
     sft_path = annotator.export_sft_chatml_jsonl(output_dir / "sft_training_chatml.jsonl")
     print(f" [PASS] ChatML SFT Dataset:        {sft_path}")
 
-    # 4. Live demonstration of 3-Tier Progressive Iterative RAG Engine
-    print("\n======================================================================")
-    print(" 5. Running 3-Tier Progressive Iterative RAG Justification Engine Demo")
-    print("======================================================================")
     justifier = IterativeRAGJustifier(db_path=db_path, max_evidence_passages=2)
-
-    # Execute justification with distractor-aware follow-up question
     result = justifier.justify_answer(
         question_id="q0001",
         follow_up_query="Why is Choice A (Supreme Court of the Philippines) not the correct answer here?",
         distractor_choice_key="A",
     )
-
     print(f"Target Question: [{result.question_id}] {result.stem}")
     print(f"Official Answer: {result.canonical_answer}")
-    print("\nSearch Execution Trace:")
-    for step in result.iterations_run:
-        print(f"  • {step}")
+    print("\n[SUCCESS] Authoring SDK Demo pipeline verified.")
 
-    print(f"\nEvidence Retrieved ({len(result.evidence_found)} passages):")
-    for ev in result.evidence_found:
-        print(f"  [{ev.passage_id}] {ev.chapter} (Page {ev.start_page}) — {ev.retrieval_tier}")
-        print(f"    Text: {ev.text[:120]}...")
 
-    print("\nConstructed Grounded Prompt for Local Qwen3-1.7B:")
-    print("----------------------------------------------------------------------")
-    print(result.final_prompt[:450] + "\n... [TRUNCATED] ...\n" + result.final_prompt[-250:])
-    print("----------------------------------------------------------------------")
-    print("\n[SUCCESS] Multi-Subject Data Annotation & Iterative RAG Engine verified.")
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Multi-Subject Data Annotator & RAG Training Preparation")
+    parser.add_argument(
+        "--mode",
+        choices=["live", "demo"],
+        default="live",
+        help="Run on live authentic reviewer data ('live', default) or 4-subject sample demo ('demo')",
+    )
+    parser.add_argument(
+        "--questions",
+        type=str,
+        default=str(REPO_ROOT / "training" / "artifacts" / "linked_questions.jsonl"),
+        help="Path to linked_questions.jsonl",
+    )
+    parser.add_argument(
+        "--passages",
+        type=str,
+        default=str(REPO_ROOT / "training" / "artifacts" / "passages.jsonl"),
+        help="Path to passages.jsonl",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=str(REPO_ROOT / "training" / "artifacts"),
+        help="Output directory for compiled artifacts",
+    )
+    args = parser.parse_args()
+
+    contracts_dir = REPO_ROOT / "contracts"
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    questions_path = Path(args.questions)
+    passages_path = Path(args.passages)
+
+    if args.mode == "live":
+        if not questions_path.exists() or not passages_path.exists():
+            print(f"[WARN] Live files not found at {questions_path} or {passages_path}. Falling back to demo mode.")
+            run_demo_pipeline(contracts_dir, output_dir / "annotated_custom")
+        else:
+            run_live_pipeline(contracts_dir, output_dir, questions_path, passages_path)
+    else:
+        demo_out = output_dir / "annotated_custom"
+        demo_out.mkdir(parents=True, exist_ok=True)
+        run_demo_pipeline(contracts_dir, demo_out)
 
 
 if __name__ == "__main__":
     main()
-

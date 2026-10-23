@@ -140,3 +140,84 @@ def test_reviewer_chatml_generation(tmp_path, sample_inline_explanation_pages):
         assert r["messages"][2]["role"] == "assistant"
         assert "(Source: Context Clues - Synonyms, [Page 1])" in r["messages"][2]["content"]
 
+
+def test_live_reviewer_artifacts_schema_conformance(contracts_dir):
+    """Validate that authentic reviewer artifacts conform strictly to official JSON schemas."""
+    import json
+    from ai_tutor_training.contracts import validate_jsonl_against_schema
+
+    artifacts_dir = Path("training/artifacts")
+    q_file = artifacts_dir / "linked_questions.jsonl"
+    p_file = artifacts_dir / "passages.jsonl"
+
+    if not q_file.exists() or not p_file.exists():
+        pytest.skip("Live reviewer artifacts not generated yet.")
+
+    q_report = validate_jsonl_against_schema(q_file, contracts_dir / "linked-question.schema.json")
+    assert q_report.is_valid, f"Questions schema failed: {q_report.errors}"
+    assert q_report.valid_count == 200
+    assert q_report.invalid_count == 0
+
+    p_report = validate_jsonl_against_schema(p_file, contracts_dir / "passage.schema.json")
+    assert p_report.is_valid, f"Passages schema failed: {p_report.errors}"
+    assert p_report.valid_count == 68
+    assert p_report.invalid_count == 0
+
+
+def test_live_content_pack_database_integrity():
+    """Verify that the compiled SQLite content_pack.db contains 200 questions, 4 topics, and FTS5 search."""
+    import sqlite3
+
+    db_path = Path("training/artifacts/content_pack.db")
+    if not db_path.exists():
+        pytest.skip("Live content_pack.db not compiled yet.")
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    # Verify questions count
+    cursor.execute("SELECT COUNT(*) FROM questions")
+    q_count = cursor.fetchone()[0]
+    assert q_count == 200
+
+    # Verify topics count
+    cursor.execute("SELECT COUNT(*) FROM topics")
+    t_count = cursor.fetchone()[0]
+    assert t_count == 4
+
+    # Verify passages count
+    cursor.execute("SELECT COUNT(*) FROM passages")
+    p_count = cursor.fetchone()[0]
+    assert p_count == 68
+
+    # Verify FTS5 BM25 search
+    cursor.execute("SELECT passage_id, text, bm25(passages_fts) as rank FROM passages_fts WHERE passages_fts MATCH 'context clues' ORDER BY rank LIMIT 3")
+    fts_results = cursor.fetchall()
+    assert len(fts_results) > 0
+    conn.close()
+
+
+def test_live_reviewer_sft_chatml_structure():
+    """Verify the 200 ChatML Grounded RAG fine-tuning examples in reviewer_sft_chatml.jsonl."""
+    import json
+
+    sft_file = Path("training/artifacts/reviewer_sft_chatml.jsonl")
+    if not sft_file.exists():
+        pytest.skip("reviewer_sft_chatml.jsonl not generated yet.")
+
+    records = []
+    with open(sft_file, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                records.append(json.loads(line))
+
+    assert len(records) == 200
+    for r in records:
+        assert r["task_type"] == "explain_more"
+        assert len(r["messages"]) == 3
+        assert r["messages"][0]["role"] == "system"
+        assert r["messages"][1]["role"] == "user"
+        assert r["messages"][2]["role"] == "assistant"
+        assert "<context>" in r["messages"][1]["content"]
+        assert "<task>" in r["messages"][1]["content"]
+
