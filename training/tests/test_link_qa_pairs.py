@@ -10,8 +10,12 @@ import pytest
 from ai_tutor_training.contracts import validate_jsonl_against_schema
 from ai_tutor_training.stages.link_qa_pairs import (
     classify_question_type,
+    extract_inline_explanation_and_key,
     link_qa_pairs,
     parse_answer_keys,
+    parse_inline_explanation_block,
+    parse_questions_from_pages,
+    validate_choice_count_warning,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.integration]
@@ -145,3 +149,73 @@ def test_link_qa_warnings_for_missing_key(tmp_path: Path, pipeline_config: dict)
     assert len(recs[0]["link_warnings"]) > 0
     # Choice count warning (3 choices instead of 4)
     assert any("choices" in w for w in recs[0]["link_warnings"])
+
+
+def test_validate_choice_count_warning() -> None:
+    # 4 and 5 choices are standard Civil Service exam formats — no warning
+    assert validate_choice_count_warning(4, "q0001", 1) is None
+    assert validate_choice_count_warning(5, "q0002", 2) is None
+
+    # Non-standard counts emit expected warning format
+    w3 = validate_choice_count_warning(3, "q0003", 3)
+    assert w3 is not None
+    assert "has 3 choices (expected 4)" in w3
+
+    w6 = validate_choice_count_warning(6, "q0004", 4)
+    assert w6 is not None
+    assert "has 6 choices (expected 4)" in w6
+
+
+def test_extract_inline_explanation_and_key() -> None:
+    text1, key1 = extract_inline_explanation_and_key("Explanation: Choice (b) is the correct answer because of accountability.")
+    assert key1 == "B"
+    assert "accountability" in text1
+
+    text2, key2 = extract_inline_explanation_and_key("Paliwanag: Titik (c) ang tamang sagot ayon sa Artikulo VI.")
+    assert key2 == "C"
+
+    text3, key3 = extract_inline_explanation_and_key("Option D is the best answer.")
+    assert key3 == "D"
+
+    text4, key4 = extract_inline_explanation_and_key("Tamang sagot: E")
+    assert key4 == "E"
+
+    text5, key5 = extract_inline_explanation_and_key("Explanation: Under Section 4 of Republic Act 6713.")
+    assert key5 is None
+
+
+def test_parse_inline_explanation_block_and_multiline_pages() -> None:
+    # Test block parser
+    res = parse_inline_explanation_block("Explanation: Choice (a) shows the primary duty of civil servants.")
+    assert res is not None
+    assert res["canonical_choice_key"] == "A"
+    assert "primary duty" in res["body"]
+
+    # Non-explanation line returns None
+    assert parse_inline_explanation_block("1. What is the supreme law?") is None
+
+    # Test multi-line continuation with 5-choice question
+    page_text = (
+        "1. Which term describes the highest civil service standard?\n"
+        "A. Loyalty\n"
+        "B. Integrity\n"
+        "C. Competence\n"
+        "D. Professionalism\n"
+        "E. Responsiveness\n"
+        "Explanation:\n"
+        "Choice (b) is correct.\n"
+        "Integrity is the cornerstone of public office under RA 6713.\n"
+    )
+    pages = [{"page_number": 1, "chapter": "Ethics", "text": page_text}]
+    raw_qs = parse_questions_from_pages(
+        pages=pages,
+        q_patterns=[r"^\s*(\d{1,4})[.)]\s+(.*)"],
+        c_patterns=[r"^\s*([A-Ea-e])[.)]\s+(.*)"],
+        header_patterns=[r"(?i)answer\s+key"],
+    )
+    assert len(raw_qs) == 1
+    assert len(raw_qs[0]["choices"]) == 5
+    assert raw_qs[0]["inline_canonical_choice_key"] == "B"
+    assert len(raw_qs[0]["explanation_lines"]) == 2
+    assert "Integrity" in " ".join(raw_qs[0]["explanation_lines"])
+

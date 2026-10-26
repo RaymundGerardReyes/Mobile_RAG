@@ -10,10 +10,16 @@ Validates:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import pytest
 import nbformat
 from nbformat import ValidationError
+
+# Windows Python 3.13 OpenBLAS, OpenMP, and PyTorch CUDA VRAM guardrails
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 
 NOTEBOOK_PATH = Path(__file__).resolve().parent.parent / "notebooks" / "training_pipeline.ipynb"

@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sqlite3
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -336,4 +337,211 @@ class DatasetAnnotator:
         os.replace(temp_sft, sft_path)
 
         return sft_path
+
+    def export_iterative_sft_chatml_jsonl(self, db_path: Path | str, output_sft_path: Path | str) -> Path:
+        """Export Grounded RAG ChatML dataset using 3-tier Iterative RAG retrieval against content_pack.db."""
+        return build_iterative_sft_chatml_dataset(
+            db_path=db_path,
+            output_chatml_path=output_sft_path,
+            content_version=self.content_version,
+            verdict_schema_path=self.contracts_dir / "free-answer-verdict.schema.json",
+        )
+
+
+def build_iterative_sft_chatml_dataset(
+    db_path: Path | str,
+    output_chatml_path: Path | str,
+    content_version: str = "2026.10.1",
+    verdict_schema_path: Path | str | None = None,
+) -> Path:
+    """Build Grounded RAG ChatML dataset by running 3-tier iterative FTS5 retrieval on content_pack.db.
+
+    Connects questions in `content_pack.db` with supporting textbook evidence retrieved via:
+      - Tier 1: Direct question_passages link
+      - Tier 2: Strict FTS5 BM25 search (AND terms)
+      - Tier 3: Broad FTS5 BM25 search (OR terms & distractor-aware)
+
+    Generates ChatML records for:
+      - Feature A: `explain_more` with exact page citations and textbook excerpts
+      - Feature B: `interpret_free_answer` with gold equivalent verdict schema validation
+    """
+    db_p = Path(db_path)
+    if not db_p.exists():
+        raise FileNotFoundError(f"Content pack database not found: {db_p}")
+
+    out_p = Path(output_chatml_path)
+    out_p.parent.mkdir(parents=True, exist_ok=True)
+
+    from ai_tutor_training.iterative_justifier import IterativeRAGJustifier
+
+    justifier = IterativeRAGJustifier(db_path=db_p, max_evidence_passages=2)
+
+    v_schema: dict[str, Any] | None = None
+    if verdict_schema_path and Path(verdict_schema_path).exists():
+        v_schema = load_schema(verdict_schema_path)
+    else:
+        # Auto-locate contracts/free-answer-verdict.schema.json
+        candidate_paths = [
+            Path(__file__).parent.parent.parent / "contracts" / "free-answer-verdict.schema.json",
+            Path("contracts/free-answer-verdict.schema.json"),
+            Path("training/contracts/free-answer-verdict.schema.json"),
+        ]
+        for cp in candidate_paths:
+            if cp.exists():
+                v_schema = load_schema(cp)
+                break
+
+    conn = sqlite3.connect(str(db_p))
+    try:
+        cursor = conn.cursor()
+        q_rows = cursor.execute(
+            """
+            SELECT q.id, q.topic_id, q.question_type, q.stem, q.canonical_explanation, q.source_page,
+                   qa.canonical_answer, c.choice_key
+            FROM questions q
+            LEFT JOIN question_answers qa ON qa.question_id = q.id
+            LEFT JOIN choices c ON c.id = qa.canonical_choice_id
+            ORDER BY q.id ASC;
+            """
+        ).fetchall()
+
+        sft_records: list[dict[str, Any]] = []
+
+        for row in q_rows:
+            q_id = row[0]
+            topic_id = row[1] or "general"
+            q_type = row[2]
+            stem = row[3]
+            explanation = row[4]
+            source_page = row[5]
+            canonical_answer = row[6] or ""
+            canonical_choice_key = row[7]
+
+            choices_rows = cursor.execute(
+                "SELECT choice_key, text FROM choices WHERE question_id = ? ORDER BY sort_order ASC;",
+                (q_id,),
+            ).fetchall()
+            choices = [{"key": cr[0], "text": cr[1]} for cr in choices_rows]
+
+            # Run 3-tier iterative retrieval
+            q_data, evidence_list, _ = justifier.retrieve_evidence_iteratively(q_id)
+
+            if not evidence_list:
+                continue
+
+            primary_ev = evidence_list[0]
+
+            # 1. Feature A: ExplainMore SFT Example
+            if explanation:
+                clean_stem = sanitize_data_content(stem)
+                clean_answer = sanitize_data_content(canonical_answer)
+                clean_note = sanitize_data_content(explanation)
+
+                context_blocks = []
+                for ev in evidence_list[:2]:
+                    clean_ev_text = sanitize_data_content(ev.text)
+                    context_blocks.append(f"[EXCERPT (Page {ev.start_page})]:\n{clean_ev_text}")
+                context_str = "\n\n".join(context_blocks)
+
+                choices_block = ""
+                if choices:
+                    choices_block = "\n".join(
+                        f"  {c['key']}. {sanitize_data_content(c['text'])}" for c in choices
+                    ) + "\n"
+
+                user_content = (
+                    f"<context>\n"
+                    f"{context_str}\n"
+                    f"</context>\n\n"
+                    f"<task>\n"
+                    f"Question: {clean_stem}\n"
+                    f"{choices_block}"
+                    f"Official Answer: {clean_answer}\n"
+                    f"Official Note: {clean_note}\n\n"
+                    f"Explain why this answer is correct based on the excerpt:\n"
+                    f"</task>"
+                )
+
+                assistant_content = (
+                    f"{explanation} "
+                    f"(Source: {primary_ev.chapter}, [Page {primary_ev.start_page}])"
+                )
+
+                sft_records.append({
+                    "task_type": "explain_more",
+                    "question_id": q_id,
+                    "topic": topic_id,
+                    "retrieval_tier": primary_ev.retrieval_tier,
+                    "messages": [
+                        {"role": "system", "content": EXPLAIN_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_content},
+                        {"role": "assistant", "content": assistant_content},
+                    ],
+                })
+
+            # 2. Feature B: InterpretFreeAnswer SFT Example for Identification / Essay
+            if q_type in ("identification", "essay"):
+                passages_dicts = [
+                    {
+                        "passage_id": ev.passage_id,
+                        "chapter": ev.chapter,
+                        "start_page": ev.start_page,
+                        "end_page": ev.end_page,
+                        "text": ev.text,
+                    }
+                    for ev in evidence_list[:2]
+                ]
+
+                eval_prompt_full = build_free_answer_prompt(
+                    stem=stem,
+                    canonical_answer=canonical_answer,
+                    user_answer=canonical_answer,
+                    passages=passages_dicts,
+                )
+
+                system_tag = "<system>"
+                end_system_tag = "</system>"
+                s_start = eval_prompt_full.find(system_tag)
+                s_end = eval_prompt_full.find(end_system_tag)
+                if s_start != -1 and s_end != -1:
+                    system_text = eval_prompt_full[s_start + len(system_tag):s_end].strip()
+                    user_text = eval_prompt_full[s_end + len(end_system_tag):].strip()
+                else:
+                    system_text = FREE_ANSWER_SYSTEM_PROMPT
+                    user_text = eval_prompt_full
+
+                verdict_payload = {
+                    "verdict": "equivalent",
+                    "matched_concepts": [topic_id, canonical_answer[:40]],
+                    "missing_concepts": [],
+                    "evidence_passage_ids": [ev.passage_id for ev in evidence_list[:2]],
+                    "confidence": 0.95,
+                }
+
+                if v_schema is not None:
+                    v_errors = validate_record_against_schema(verdict_payload, v_schema)
+                    if v_errors:
+                        raise ValueError(f"Generated verdict violated schema: {v_errors}")
+
+                sft_records.append({
+                    "task_type": "interpret_free_answer",
+                    "question_id": q_id,
+                    "topic": topic_id,
+                    "retrieval_tier": primary_ev.retrieval_tier,
+                    "messages": [
+                        {"role": "system", "content": system_text},
+                        {"role": "user", "content": user_text},
+                        {"role": "assistant", "content": json.dumps(verdict_payload, ensure_ascii=False)},
+                    ],
+                })
+    finally:
+        conn.close()
+
+    with tempfile.NamedTemporaryFile("w", dir=out_p.parent, delete=False, encoding="utf-8") as tf:
+        temp_sft = Path(tf.name)
+        for rec in sft_records:
+            tf.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    os.replace(temp_sft, out_p)
+
+    return out_p
 

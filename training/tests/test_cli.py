@@ -72,13 +72,13 @@ def test_cli_help(cli_runner: CliRunner) -> None:
     result = cli_runner.invoke(cli, ["--help"])
     assert result.exit_code == 0
     assert "AI Tutor offline preparation and training pipeline" in result.output
-    for cmd in ["extract", "link", "build-passages", "build-content-pack", "validate", "run-all"]:
+    for cmd in ["extract", "link", "build-passages", "build-content-pack", "validate", "run-all", "justify", "export-sft"]:
         assert cmd in result.output
 
 
 def test_subcommand_helps(cli_runner: CliRunner) -> None:
     """Each subcommand provides descriptive --help."""
-    for cmd in ["extract", "link", "build-passages", "build-content-pack", "validate", "run-all"]:
+    for cmd in ["extract", "link", "build-passages", "build-content-pack", "validate", "run-all", "justify", "export-sft"]:
         res = cli_runner.invoke(cli, [cmd, "--help"])
         assert res.exit_code == 0, f"--help failed for {cmd}"
         assert "Usage:" in res.output
@@ -329,4 +329,99 @@ def test_cli_subcommands_invalid_inputs(
         ],
     )
     assert res_bad_cp.exit_code != 0
+
+
+def test_cmd_justify_and_export_sft(
+    cli_runner: CliRunner,
+    sample_linked_questions_path: Path,
+    sample_passages_path: Path,
+    tmp_path: Path,
+    temp_pipeline_config: Path,
+) -> None:
+    """Verify justify and export-sft CLI subcommands."""
+    db_out = tmp_path / "cli_test_content_pack.db"
+    res_cp = cli_runner.invoke(
+        cli,
+        [
+            "build-content-pack",
+            "--config",
+            str(temp_pipeline_config),
+            "--questions",
+            str(sample_linked_questions_path),
+            "--passages",
+            str(sample_passages_path),
+            "--output",
+            str(db_out),
+        ],
+    )
+    assert res_cp.exit_code == 0
+    assert db_out.exists()
+
+    # Test justify subcommand
+    res_just = cli_runner.invoke(
+        cli,
+        [
+            "justify",
+            "--db",
+            str(db_out),
+            "-q",
+            "q0001",
+        ],
+    )
+    assert res_just.exit_code == 0
+    assert "=== Question:" in res_just.output
+    assert "Retrieval Trace" in res_just.output
+
+    # Test export-sft subcommand
+    sft_out = tmp_path / "cli_sft.jsonl"
+    res_sft = cli_runner.invoke(
+        cli,
+        [
+            "export-sft",
+            "--db",
+            str(db_out),
+            "--output",
+            str(sft_out),
+            "--version",
+            "2026.10.1",
+        ],
+    )
+    assert res_sft.exit_code == 0
+    assert sft_out.exists()
+    with sft_out.open("r", encoding="utf-8") as f:
+        records = [json.loads(line) for line in f if line.strip()]
+    assert len(records) > 0
+
+
+def test_content_pack_main_entrypoint(
+    sample_linked_questions_path: Path,
+    sample_passages_path: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify standalone main() entrypoint in content_pack.py."""
+    from ai_tutor_training.content_pack import main as cp_main
+
+    out_db = tmp_path / "cp_standalone.db"
+    manifest_out = tmp_path / "cp_manifest.json"
+
+    test_args = [
+        "content_pack.py",
+        "--questions",
+        str(sample_linked_questions_path),
+        "--passages",
+        str(sample_passages_path),
+        "--output",
+        str(out_db),
+        "--manifest",
+        str(manifest_out),
+        "--version",
+        "2026.10.1",
+    ]
+    monkeypatch.setattr("sys.argv", test_args)
+    exit_code = cp_main()
+    assert exit_code == 0
+    assert out_db.exists()
+    assert manifest_out.exists()
+
 

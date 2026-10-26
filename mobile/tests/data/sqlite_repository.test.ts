@@ -4,7 +4,7 @@ import { NodeSqliteDatabase } from '../../src/data/sqlite/sqlite_database.js';
 import { INITIAL_SCHEMA_SQL } from '../../src/data/sqlite/schema.js';
 import { ContentPackImporter, ContentPackData } from '../../src/data/content_pack/content_pack_importer.js';
 import { SqliteQuestionRepository } from '../../src/data/sqlite/sqlite_question_repository.js';
-import { SqlitePassageRetriever } from '../../src/data/sqlite/sqlite_passage_retriever.js';
+import { SqlitePassageRetriever, extractFtsKeywords, FTS_STOP_WORDS } from '../../src/data/sqlite/sqlite_passage_retriever.js';
 
 describe('Data Layer: SQLite Repositories & Content Pack Importer', () => {
   let db: NodeSqliteDatabase;
@@ -274,5 +274,66 @@ describe('Data Layer: SQLite Repositories & Content Pack Importer', () => {
     const q1 = await questionRepo.getQuestionById('q0001');
     assert.ok(q1);
     assert.equal(q1!.stem, 'Where is executive power vested?');
+  });
+
+  it('extractFtsKeywords filters stop words and deduplicates for English and Filipino', () => {
+    // English filtering
+    const enTokens = extractFtsKeywords('What is the executive power of the President under the Constitution?', 4);
+    assert.deepEqual(enTokens, ['executive', 'power', 'president', 'constitution']);
+
+    // Filipino stop word filtering
+    const filTokens = extractFtsKeywords('Alin sa mga sumusunod ang tamang kahulugan ng accountability ayon sa batas?', 6);
+    assert.ok(!filTokens.includes('ang'));
+    assert.ok(!filTokens.includes('mga'));
+    assert.ok(!filTokens.includes('sa'));
+    assert.ok(!filTokens.includes('tamang'));
+    assert.ok(filTokens.includes('accountability'));
+    assert.ok(filTokens.includes('batas'));
+  });
+
+  it('retrieveIterativeEvidence executes 3-tier progressive RAG', async () => {
+    await importer.importPack(mockPack);
+
+    // Tier 1: Question 1 has direct provenance link in question_passages
+    const tier1Res = await passageRetriever.retrieveIterativeEvidence(
+      'q0001',
+      'Where is executive power vested?',
+      'President of the Philippines',
+      undefined,
+      2
+    );
+    assert.equal(tier1Res.tierUsed, 'tier1_direct');
+    assert.ok(tier1Res.passages.length >= 1);
+    assert.equal(tier1Res.passages[0]?.passage.id, 'p0001');
+    assert.equal(tier1Res.passages[0]?.strategy, 'linked');
+    assert.ok(tier1Res.iterationsRun.length >= 1);
+    assert.ok(tier1Res.iterationsRun[0]?.includes('Iteration 1'));
+
+    // Tier 2: Question 2 has no direct link, but matching keywords in stem/answer for p0002
+    const tier2Res = await passageRetriever.retrieveIterativeEvidence(
+      'q0002',
+      'Where is legislative power in Congress?',
+      'Senate and House of Representatives',
+      undefined,
+      2
+    );
+    assert.equal(tier2Res.tierUsed, 'tier2_strict_and');
+    assert.ok(tier2Res.passages.length >= 1);
+    assert.equal(tier2Res.passages[0]?.passage.id, 'p0002');
+    assert.equal(tier2Res.passages[0]?.strategy, 'fts5');
+    assert.ok(tier2Res.iterationsRun.some((it) => it.includes('Iteration 2')));
+
+    // Tier 3: Query with distractor keywords where strict AND would not match
+    const tier3Res = await passageRetriever.retrieveIterativeEvidence(
+      'q_unlinked_999',
+      'Unrelated stem keywords xyz123',
+      'unrelated answer',
+      'Congress representatives legislative',
+      2
+    );
+    assert.equal(tier3Res.tierUsed, 'tier3_broad_or');
+    assert.ok(tier3Res.passages.length >= 1);
+    assert.equal(tier3Res.passages[0]?.passage.id, 'p0002');
+    assert.ok(tier3Res.iterationsRun.some((it) => it.includes('Iteration 3')));
   });
 });

@@ -18,6 +18,73 @@ from ai_tutor_training.provenance import (
 )
 
 
+def validate_choice_count_warning(num_choices: int, q_id: str, raw_num: int) -> str | None:
+    """Validate multiple choice option count.
+
+    Civil Service Commission exams support standard 4-choice (General Subprofessional)
+    and 5-choice (Professional / Verbal Ability) formats.
+    Returns a warning string if num_choices is not in (4, 5), otherwise None.
+    """
+    if num_choices not in (4, 5):
+        return f"{q_id} (Item {raw_num}) has {num_choices} choices (expected 4)"
+    return None
+
+
+def extract_inline_explanation_and_key(text: str) -> tuple[str, str | None]:
+    """Extract explanation text and any embedded canonical choice key (A-E).
+
+    Recognizes patterns such as:
+      - 'Choice (a)' or 'Option (B)' or 'Titik (c)'
+      - 'Choice A' or 'Option B'
+      - '(a) is correct' or '(b) is the right answer'
+      - 'Correct answer: B', 'Tamang sagot: C', 'Answer: D'
+    """
+    clean = text.strip()
+    key: str | None = None
+
+    # 1. Parenthesized or labeled choice: Choice (b), Option (c), Titik (a), Choice A, Option B
+    m = re.search(r"(?:Choice|Option|Titik)\s*\(?([A-Ea-e])\)?(?:\s+is\b|\b)", clean, re.IGNORECASE)
+    if m:
+        key = m.group(1).upper()
+    else:
+        # 2. '(b) is correct' or '(b) is the right answer'
+        m2 = re.search(r"\(([A-Ea-e])\)\s+is\s+(?:the\s+)?(?:correct|right|best)\b", clean, re.IGNORECASE)
+        if m2:
+            key = m2.group(1).upper()
+        else:
+            # 3. 'Answer: B' or 'Tamang sagot: C' or 'Correct answer is D'
+            m3 = re.search(
+                r"(?:(?:Correct\s+)?(?:Answer|Sagot)|Tamang\s+sagot)\s*[:\-]?\s*\(?([A-Ea-e])\)?\b",
+                clean,
+                re.IGNORECASE,
+            )
+            if m3:
+                key = m3.group(1).upper()
+
+    return clean, key
+
+
+def parse_inline_explanation_block(line_str: str) -> dict[str, Any] | None:
+    """Check if line starts an inline explanation block, and parse body & choice key.
+
+    Returns:
+        dict with keys:
+          - 'body': str (the stripped text after the explanation prefix)
+          - 'canonical_choice_key': str | None ('A'-'E' if detected)
+        or None if line is not an explanation header.
+    """
+    exp_match = re.match(r"^(?:Explanation|Paliwanag|Rason)\s*[:\-]\s*(.*)$", line_str, re.IGNORECASE)
+    if not exp_match:
+        return None
+
+    body = exp_match.group(1).strip()
+    _, key = extract_inline_explanation_and_key(line_str)
+    return {
+        "body": body,
+        "canonical_choice_key": key,
+    }
+
+
 def is_answer_key_item_line(line_str: str, item_patterns: list[str]) -> bool:
     """Check if a line represents answer key content rather than a question stem.
 
@@ -229,17 +296,15 @@ def parse_questions_from_pages(
             is_question = any(re.match(q_pat, line_str) for q_pat in q_patterns)
 
             # Check for inline explanation block (e.g. "Explanation: Choice (b) ... is correct")
-            exp_match = re.match(r"^(?:Explanation|Paliwanag|Rason)\s*[:\-]\s*(.*)$", line_str, re.IGNORECASE)
-            if exp_match:
+            exp_info = parse_inline_explanation_block(line_str)
+            if exp_info is not None:
                 if current_q:
                     current_choice = None
                     in_explanation = True
-                    exp_body = exp_match.group(1).strip()
-                    if exp_body:
-                        current_q["explanation_lines"].append(exp_body)
-                    choice_key_m = re.search(r"(?:Choice|Option|Titik)\s*\(([A-Ea-e])\)", line_str, re.IGNORECASE)
-                    if choice_key_m:
-                        current_q["inline_canonical_choice_key"] = choice_key_m.group(1).upper()
+                    if exp_info["body"]:
+                        current_q["explanation_lines"].append(exp_info["body"])
+                    if exp_info["canonical_choice_key"]:
+                        current_q["inline_canonical_choice_key"] = exp_info["canonical_choice_key"]
                 continue
 
             if in_explanation and current_q:
@@ -250,6 +315,10 @@ def parse_questions_from_pages(
                 else:
                     # Accumulate explanation continuation lines
                     current_q["explanation_lines"].append(line_str)
+                    if not current_q.get("inline_canonical_choice_key"):
+                        _, cont_key = extract_inline_explanation_and_key(line_str)
+                        if cont_key:
+                            current_q["inline_canonical_choice_key"] = cont_key
                     continue
 
             # Check if answer key starts — questions stop here
@@ -503,10 +572,10 @@ def link_qa_pairs(
 
         if q_type == "multiple_choice":
             num_choices = len(choices) if choices else 0
-            if num_choices not in (4, 5):
-                msg = f"{q_id} (Item {raw_num}) has {num_choices} choices (expected 4)"
-                item_warnings.append(msg)
-                warnings.append(msg)
+            choice_warning = validate_choice_count_warning(num_choices, q_id, raw_num)
+            if choice_warning:
+                item_warnings.append(choice_warning)
+                warnings.append(choice_warning)
 
             if inline_canonical_choice_key:
                 canonical_choice_key = inline_canonical_choice_key

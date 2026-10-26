@@ -167,6 +167,46 @@ if click is not None:
         )
         click.echo("Pipeline completed successfully!")
 
+    @cli.command("justify")
+    @click.option("--db", default="artifacts/content_pack.db", help="Path to content pack SQLite database.")
+    @click.option("--question-id", "-q", required=True, help="Question ID to justify.")
+    @click.option("--query", help="Optional student follow-up query or confusion.")
+    @click.option("--distractor", "-d", help="Optional distractor choice key (e.g. B).")
+    def cmd_justify(db: str, question_id: str, query: str | None, distractor: str | None) -> None:
+        """Run 3-tier iterative RAG retrieval and format justification prompt."""
+        from ai_tutor_training.iterative_justifier import IterativeRAGJustifier
+
+        justifier = IterativeRAGJustifier(db_path=db)
+        q_data, evidence, log = justifier.retrieve_evidence_iteratively(
+            question_id=question_id,
+            follow_up_query=query,
+            distractor_choice_key=distractor,
+        )
+        click.echo(f"=== Question: {q_data['stem']} ===")
+        click.echo(f"Canonical Answer: {q_data['canonical_answer']}")
+        click.echo("\n--- Retrieval Trace ---")
+        for step in log:
+            click.echo(f"  * {step}")
+        click.echo(f"\nRetrieved {len(evidence)} evidence passages:")
+        for i, ev in enumerate(evidence, 1):
+            click.echo(f"  [{i}] {ev.passage_id} (Page {ev.start_page}, {ev.retrieval_tier}): {ev.text[:100]}...")
+
+    @cli.command("export-sft")
+    @click.option("--db", default="artifacts/content_pack.db", help="Path to content pack database.")
+    @click.option("--output", "-o", default="artifacts/reviewer_sft_chatml.jsonl", help="Path to output ChatML JSONL.")
+    @click.option("--version", default="2026.10.1", help="Content pack version.")
+    def cmd_export_sft(db: str, output: str, version: str) -> None:
+        """Export Grounded RAG ChatML training records using 3-tier Iterative RAG retrieval."""
+        from ai_tutor_training.annotation import build_iterative_sft_chatml_dataset
+
+        click.echo(f"Exporting Grounded RAG SFT dataset from {db} to {output}...")
+        out_path = build_iterative_sft_chatml_dataset(
+            db_path=db,
+            output_chatml_path=output,
+            content_version=version,
+        )
+        click.echo(f"Successfully generated ChatML dataset at {out_path}.")
+
 
 def main() -> None:
     if click is not None:

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from ai_tutor_training.annotation import DatasetAnnotator
+from ai_tutor_training.annotation import DatasetAnnotator, build_iterative_sft_chatml_dataset
 from ai_tutor_training.contracts import load_schema, validate_record_against_schema
 
 
@@ -247,4 +247,63 @@ class TestDatasetAnnotator:
         assert errors == []
         assert verdict_data["verdict"] == "equivalent"
         assert verdict_data["confidence"] >= 0.9
+
+    def test_export_iterative_sft_chatml_jsonl(self, contracts_dir: Path, tmp_path: Path) -> None:
+        """Verify 3-tier iterative RAG SFT export pairs questions with content_pack.db passages."""
+        annotator = DatasetAnnotator(contracts_dir=contracts_dir)
+        annotator.add_passage(
+            chapter="Ethics",
+            section="Standards",
+            start_page=5,
+            end_page=5,
+            text="Republic Act 6713 is the Code of Conduct and Ethical Standards for Public Officials and Employees.",
+        )
+        annotator.add_question(
+            topic="Ethics",
+            question_type="multiple_choice",
+            stem="What law governs ethical standards?",
+            choices=[{"key": "A", "text": "R.A. 6713"}, {"key": "B", "text": "R.A. 3019"}],
+            canonical_answer="R.A. 6713",
+            canonical_choice_key="A",
+            canonical_explanation="R.A. 6713 is the Code of Conduct.",
+            source_page=5,
+        )
+        annotator.add_question(
+            topic="Ethics",
+            question_type="identification",
+            stem="Which statute establishes code of conduct?",
+            canonical_answer="Republic Act 6713",
+            source_page=5,
+        )
+
+        db_path = tmp_path / "test_cp.db"
+        annotator.compile_content_pack(output_db_path=db_path)
+        assert db_path.exists()
+
+        out_sft = tmp_path / "iterative_sft.jsonl"
+        res_path = annotator.export_iterative_sft_chatml_jsonl(db_path=db_path, output_sft_path=out_sft)
+        assert res_path.exists()
+
+        with out_sft.open("r", encoding="utf-8") as f:
+            records = [json.loads(line) for line in f]
+
+        assert len(records) >= 2
+        # Check that each record includes retrieval_tier and ChatML structure
+        rec0 = records[0]
+        assert "retrieval_tier" in rec0
+        assert rec0["task_type"] == "explain_more"
+        assert len(rec0["messages"]) == 3
+        assert "Page 5" in rec0["messages"][2]["content"]
+
+        rec1 = records[1]
+        assert rec1["task_type"] == "interpret_free_answer"
+        verdict = json.loads(rec1["messages"][2]["content"])
+        assert verdict["verdict"] == "equivalent"
+        assert "evidence_passage_ids" in verdict
+
+        # Also test standalone build_iterative_sft_chatml_dataset function directly
+        out_sft2 = tmp_path / "iterative_sft_direct.jsonl"
+        res_path2 = build_iterative_sft_chatml_dataset(db_path=db_path, output_chatml_path=out_sft2)
+        assert res_path2.exists()
+
 

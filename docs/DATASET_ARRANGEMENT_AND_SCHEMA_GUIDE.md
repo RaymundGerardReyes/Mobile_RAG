@@ -224,3 +224,4 @@ python -m pytest training/tests/test_reviewer_ingestion.py -v
 
 ### Step 3: Stage 5 GPU LoRA Fine-Tuning
 Open [`training/notebooks/training_pipeline.ipynb`](file:///d:/MobileApp%20Rag/training/notebooks/training_pipeline.ipynb) and run all 10 stages to train the model on your local RTX 4050 GPU!
+
