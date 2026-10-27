@@ -6,11 +6,6 @@
     "version": "0.3.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
-    "splash": {
-      "resizeMode": "contain",
-      "backgroundColor": "#2A338F"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "ph.gov.csc.aitutor"

@@ -13,7 +13,11 @@ import { GetNextQuestion } from '../application/use_cases/get_next_question.js';
 import { SubmitAnswer, SubmitAnswerResponse } from '../application/use_cases/submit_answer.js';
 import { GetExplanationContext } from '../application/use_cases/get_explanation_context.js';
 import { ExplainMore, ExplainMoreResponse } from '../application/use_cases/explain_more.js';
-import { InterpretFreeAnswer, InterpretFreeAnswerResponse } from '../application/use_cases/interpret_free_answer.js';
+import {
+  InterpretFreeAnswer,
+  InterpretFreeAnswerResponse,
+  ConsensusEvaluationBreakdown,
+} from '../application/use_cases/interpret_free_answer.js';
 import { CancelGeneration } from '../application/use_cases/cancel_generation.js';
 import { ValidatedVerdictResult } from '../ai/evaluation/output_validator.js';
 import { DiagnosticsLogger } from '../diagnostics/diagnostics_logger.js';
@@ -55,6 +59,7 @@ export interface ReviewSessionState {
   aiExplanation: string | null;
   streamingAiText: string;
   freeAnswerEvaluation: ValidatedVerdictResult | null;
+  consensusEvaluation: ConsensusEvaluationBreakdown | null;
   aiError: string | null;
 }
 
@@ -102,6 +107,7 @@ export class ReviewSessionController {
       aiExplanation: null,
       streamingAiText: '',
       freeAnswerEvaluation: null,
+      consensusEvaluation: null,
       aiError: null,
     };
   }
@@ -163,6 +169,7 @@ export class ReviewSessionController {
       aiExplanation: null,
       streamingAiText: '',
       freeAnswerEvaluation: null,
+      consensusEvaluation: null,
       aiError: null,
     });
   }
@@ -318,6 +325,97 @@ export class ReviewSessionController {
   }
 
   /**
+   * Requests multi-sample Best-of-N probabilistic consensus evaluation for free answers.
+   */
+  public async requestConsensusInterpretation(numSamples = 3): Promise<ConsensusEvaluationBreakdown | null> {
+    if (!this.state.currentQuestion || this.state.isGeneratingAi) {
+      return null;
+    }
+
+    const studentAnswer = this.state.freeTextInput.trim();
+    if (!studentAnswer) {
+      return null;
+    }
+
+    try {
+      this.activeAbortController = new AbortController();
+      this.updateState({ isGeneratingAi: true, aiError: null });
+
+      const result = await this.deps.interpretFreeAnswer.executeConsensus(
+        this.state.currentQuestion.id,
+        studentAnswer,
+        numSamples,
+        this.activeAbortController.signal
+      );
+
+      this.updateState({
+        isGeneratingAi: false,
+        consensusEvaluation: result,
+        freeAnswerEvaluation: result.winningEvaluation,
+        aiError: null,
+      });
+
+      return result;
+    } catch (err: any) {
+      const isAborted = this.activeAbortController?.signal.aborted || err?.name === 'AbortError';
+      this.updateState({
+        isGeneratingAi: false,
+        aiError: isAborted ? 'Interpretation cancelled' : (err?.message ?? 'Consensus evaluation failed'),
+      });
+      return null;
+    } finally {
+      this.activeAbortController = null;
+    }
+  }
+
+  /**
+   * Requests follow-up distractor elimination or clarification via Iterative RAG.
+   */
+  public async requestClarification(query: string): Promise<ExplainMoreResponse | null> {
+    if (!this.state.currentQuestion || this.state.isGeneratingAi) {
+      return null;
+    }
+
+    try {
+      this.activeAbortController = new AbortController();
+      this.updateState({ isGeneratingAi: true, aiError: null, streamingAiText: '' });
+
+      let streamed = '';
+      const result = await this.deps.explainMore.execute({
+        questionId: this.state.currentQuestion.id,
+        followUpQuery: query,
+        signal: this.activeAbortController.signal,
+        onChunk: (chunk: string) => {
+          streamed += chunk;
+          this.updateState({ streamingAiText: streamed });
+        },
+      });
+
+      const updatedPages = Array.from(
+        new Set([...this.state.sourcePages, ...result.sourcePages])
+      ).sort((a, b) => a - b);
+
+      this.updateState({
+        isGeneratingAi: false,
+        aiExplanation: result.explanation,
+        sourcePages: updatedPages,
+        aiError: null,
+      });
+
+      return result;
+    } catch (err: any) {
+      const isAborted = this.activeAbortController?.signal.aborted || err?.name === 'AbortError';
+      this.updateState({
+        isGeneratingAi: false,
+        aiError: isAborted ? 'Clarification cancelled' : (err?.message ?? 'Clarification failed'),
+      });
+      return null;
+    } finally {
+      this.activeAbortController = null;
+    }
+  }
+
+  /**
    * Immediately aborts any in-flight LLM explanation or semantic grading task.
    */
   public cancelActiveAiGeneration(): boolean {
@@ -434,6 +532,7 @@ export class ReviewSessionController {
         aiExplanation: null,
         streamingAiText: '',
         freeAnswerEvaluation: null,
+        consensusEvaluation: null,
         isGeneratingAi: false,
         aiError: null,
       });
@@ -455,6 +554,7 @@ export class ReviewSessionController {
       aiExplanation: null,
       streamingAiText: '',
       freeAnswerEvaluation: null,
+      consensusEvaluation: null,
       isGeneratingAi: false,
       aiError: null,
     });

@@ -143,6 +143,94 @@ class InMemoryQuestionRepository implements QuestionRepository, PassageRetriever
     return this.passagesMap[questionId] || [];
   }
 
+  async retrieveIterativeEvidence(
+    questionId: string,
+    stem: string,
+    canonicalAnswer: string,
+    followUpQuery?: string,
+    limit = 2
+  ): Promise<{
+    passages: RetrievedPassage[];
+    tierUsed: 'tier1_direct' | 'tier2_strict_and' | 'tier3_broad_or' | 'none';
+    iterationsRun: string[];
+  }> {
+    const iterationsRun: string[] = [];
+    const results: RetrievedPassage[] = [];
+    const seenIds = new Set<string>();
+
+    // Iteration 1: Direct linked passages
+    iterationsRun.push(`Iteration 1: Checking Tier 1 direct links for ${questionId}`);
+    const direct = this.passagesMap[questionId] || [];
+    for (const p of direct) {
+      if (!seenIds.has(p.passage.id) && results.length < limit) {
+        seenIds.add(p.passage.id);
+        results.push({ ...p, strategy: 'linked' });
+      }
+    }
+    if (results.length >= limit && !followUpQuery) {
+      return { passages: results, tierUsed: 'tier1_direct', iterationsRun };
+    }
+
+    // Extract keywords for Tier 2 & Tier 3 search
+    const rawSearch = followUpQuery?.trim() ? followUpQuery : `${canonicalAnswer} ${stem}`;
+    const keywords = rawSearch
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length > 3)
+      .slice(0, 5);
+
+    const allPassages: RetrievedPassage[] = [];
+    for (const list of Object.values(this.passagesMap)) {
+      for (const item of list) {
+        allPassages.push(item);
+      }
+    }
+
+    // Iteration 2: Strict AND match across top 3 keywords
+    if (keywords.length > 0) {
+      const strictTerms = keywords.slice(0, 3);
+      iterationsRun.push(`Iteration 2: Strict AND search for [${strictTerms.join(', ')}]`);
+      for (const candidate of allPassages) {
+        const textLower = candidate.passage.text.toLowerCase();
+        if (
+          !seenIds.has(candidate.passage.id) &&
+          strictTerms.every((kw) => textLower.includes(kw))
+        ) {
+          seenIds.add(candidate.passage.id);
+          results.push({ ...candidate, strategy: 'fts5' });
+          if (results.length >= limit) {
+            return { passages: results, tierUsed: 'tier2_strict_and', iterationsRun };
+          }
+        }
+      }
+    }
+
+    // Iteration 3: Broad OR match across keywords
+    if (keywords.length > 0 && results.length < limit) {
+      iterationsRun.push(`Iteration 3: Broad OR fallback for [${keywords.join(', ')}]`);
+      for (const candidate of allPassages) {
+        const textLower = candidate.passage.text.toLowerCase();
+        if (
+          !seenIds.has(candidate.passage.id) &&
+          keywords.some((kw) => textLower.includes(kw))
+        ) {
+          seenIds.add(candidate.passage.id);
+          results.push({ ...candidate, strategy: 'fts5' });
+          if (results.length >= limit) {
+            return { passages: results, tierUsed: 'tier3_broad_or', iterationsRun };
+          }
+        }
+      }
+    }
+
+    return {
+      passages: results,
+      tierUsed: results.length > 0 ? 'tier1_direct' : 'none',
+      iterationsRun,
+    };
+  }
+
   async searchPassages(query: string, _limit?: number): Promise<RetrievedPassage[]> {
     const norm = query.toLowerCase();
     const matches: RetrievedPassage[] = [];
@@ -292,20 +380,50 @@ class LocalMockLlmPort implements LocalLlmPort {
     }
 
     let text = '';
+    const temp = request.temperature ?? 0.65;
+    const filipinoLeadIns = [
+      `Batay sa Opisyal na Civil Service Commission (CSC) Reviewer${pageNum ? ` (Pahina ${pageNum})` : ''}:`,
+      `Ayon sa napatunayang pamantayan ng Civil Service Commission${pageNum ? ` [Pahina ${pageNum}]` : ''}:`,
+      `Alinsunod sa opisyal na kurikulum ng CSC Reviewer${pageNum ? ` (Pahina ${pageNum})` : ''}:`,
+    ];
+    const englishLeadIns = [
+      `Based on the official Philippine Civil Service Commission (CSC) Reviewer${pageNum ? ` (Page ${pageNum})` : ''}:`,
+      `According to the verified Civil Service Commission curriculum standards${pageNum ? ` [Page ${pageNum}]` : ''}:`,
+      `Drawing directly from the CSC statutory reference materials${pageNum ? ` (Page ${pageNum})` : ''}:`,
+    ];
+    const filipinoAnalysis = [
+      `Tinitiyak ng opisyal na sagot na natutugunan ang hinihingi ng tanong, habang ang ibang mga pagpipilian ay hindi umaayon sa itinakdang pamantayan.`,
+      `Ang nasabing batas o panuntunan ay tahasang nagpapatunay sa sagot, kaya ibinubukod ang mga maling opsyon.`,
+      `Malinaw na sinusuportahan ng batayan ang tamang opsyon samantalang salungat dito ang mga panggulo (distractors).`,
+    ];
+    const englishAnalysis = [
+      `"${answer}" satisfies all conditions of the stem, whereas the alternative distractors deviate from the verified curriculum guidelines.`,
+      `The statutory rule explicitly establishes this requirement, directly eliminating the incorrect distractor alternatives.`,
+      `This verified standard directly confirms the canonical answer while ruling out choices that lack legal basis.`,
+    ];
+    const pickIdx = temp > 0.1 ? Math.floor(Math.random() * 3) : 0;
+
+    const clarificationMatch = request.prompt.match(
+      /LEARNER CLARIFICATION REQUEST \/ DISTRACTOR QUERY:\s*\n"([^"]+)"/i
+    );
+    const distractorQuery = clarificationMatch ? clarificationMatch[1].trim() : '';
+
     if (isFilipino) {
       text =
-        `Batay sa Opisyal na Civil Service Commission (CSC) Reviewer${pageNum ? ` (Pahina ${pageNum})` : ''}:\n\n` +
+        `${filipinoLeadIns[pickIdx]}\n\n` +
+        (distractorQuery ? `• Tugon sa Katanungan:\n${distractorQuery} — Ang nasabing pagpipilian ay hindi wasto sapagkat hindi ito naaayon sa itinakdang tuntunin ng batas.\n\n` : '') +
         `• Tamang Sagot: "${answer}"\n\n` +
         `• Paliwanag ng Panuntunan:\n${rationale ? rationale : `Ang sagot na "${answer}" ang wastong tugon na itinatadhana ayon sa pamantayan ng pagsusulit sa ${chapterName || 'asignaturang ito'}.`}\n\n` +
         (excerpt ? `• Sipi mula sa Sanggunian:\n"${excerpt}"\n\n` : '') +
-        `• Pagsusuri: Tinitiyak ng opisyal na sagot na natutugunan ang hinihingi ng tanong, habang ang ibang mga pagpipilian ay hindi umaayon sa itinakdang pamantayan.`;
+        `• Pagsusuri: ${filipinoAnalysis[pickIdx]}`;
     } else {
       text =
-        `Based on the official Philippine Civil Service Commission (CSC) Reviewer${pageNum ? ` (Page ${pageNum})` : ''}:\n\n` +
+        `${englishLeadIns[pickIdx]}\n\n` +
+        (distractorQuery ? `• Clarification / Distractor Analysis:\n"${distractorQuery}" — This alternative is incorrect because it deviates from statutory requirements.\n\n` : '') +
         `• Correct Answer: "${answer}"\n\n` +
         `• Key Rule / Concept:\n${rationale ? rationale : `The official answer "${answer}" directly aligns with the Civil Service examination standards for ${chapterName || 'this subject'}.`}\n\n` +
         (excerpt ? `• Verified Reference Excerpt:\n"${excerpt}"\n\n` : '') +
-        `• Option Analysis: "${answer}" satisfies all conditions of the stem, whereas the alternative distractors deviate from the verified curriculum guidelines.`;
+        `• Option Analysis: ${englishAnalysis[pickIdx]}`;
     }
 
     const chunks = text.split(' ');
@@ -388,7 +506,8 @@ export default function App() {
 
       await controller.startSession({
         query: { topicId, mode },
-        shuffleChoices: false,
+        shuffleChoices: true,
+        sessionSeed: `session_${Date.now()}`,
       });
 
       setCurrentScreen('quiz');
@@ -442,6 +561,7 @@ export default function App() {
           aiExplanation={controllerState.aiExplanation}
           streamingAiText={controllerState.streamingAiText}
           freeAnswerEvaluation={controllerState.freeAnswerEvaluation}
+          consensusEvaluation={controllerState.consensusEvaluation}
           modelStatus={modelStatus}
           isGeneratingAi={controllerState.isGeneratingAi}
           aiError={controllerState.aiError}
@@ -454,6 +574,10 @@ export default function App() {
           onRequestInterpretFreeAnswer={() =>
             controller.requestFreeAnswerInterpretation()
           }
+          onRequestConsensusInterpretation={() =>
+            controller.requestConsensusInterpretation()
+          }
+          onRequestClarification={(query) => controller.requestClarification(query)}
           onCancelGeneration={() => controller.cancelActiveAiGeneration()}
           onNextQuestion={() => controller.nextQuestion()}
           onRateCard={handleRateCard}

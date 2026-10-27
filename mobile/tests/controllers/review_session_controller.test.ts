@@ -544,4 +544,31 @@ describe('ReviewSessionController & SQLite Migration Safeguard', () => {
     assert.equal(result?.isCorrect, false);
     assert.equal(result?.score, 0.0);
   });
+
+  it('13. requestConsensusInterpretation: executes multi-sample consensus and updates state', async () => {
+    await controller.startSession({ query: { mode: 'all' } });
+    controller.nextQuestion(); // Move to q2 (identification)
+    assert.equal(controller.getState().currentQuestion?.id, 'q2');
+
+    controller.setFreeTextInput('Civil Service Commission');
+    const consensus = await controller.requestConsensusInterpretation(3);
+
+    assert.notEqual(consensus, null);
+    assert.equal(consensus?.questionId, 'q2');
+    assert.equal(consensus?.numSamples, 3);
+    assert.equal(controller.getState().consensusEvaluation, consensus);
+    assert.notEqual(controller.getState().freeAnswerEvaluation, null);
+    assert.equal(controller.getState().isGeneratingAi, false);
+  });
+
+  it('14. requestClarification: streams distractor clarification and updates aiExplanation', async () => {
+    await controller.startSession({ query: { mode: 'all' } });
+    assert.equal(controller.getState().currentQuestion?.id, 'q1');
+
+    const result = await controller.requestClarification('Why is Choice B wrong?');
+    assert.notEqual(result, null);
+    assert.notEqual(controller.getState().aiExplanation, null);
+    assert.notEqual(controller.getState().streamingAiText, '');
+    assert.equal(controller.getState().isGeneratingAi, false);
+  });
 });

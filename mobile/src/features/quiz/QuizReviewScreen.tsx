@@ -29,12 +29,18 @@ import {
   ScreenContainer,
   ScreenHeader,
 } from '../../components/CorePrimitives.js';
+import {
+  RetrievalTierBadge,
+  BestOfNConsensusCard,
+  FollowUpClarificationBar,
+} from '../../components/ProbabilisticRagPrimitives.js';
 import { Choice, Question } from '../../domain/types.js';
 import { ModelRuntimeStatus } from '../../application/ports/local_llm_port.js';
 import { RetrievedPassage } from '../../application/ports/passage_retriever.js';
 import { SubmitAnswerResponse } from '../../application/use_cases/submit_answer.js';
 import { ExplainMoreResponse } from '../../application/use_cases/explain_more.js';
 import { ValidatedVerdictResult } from '../../ai/evaluation/output_validator.js';
+import { ConsensusEvaluationBreakdown } from '../../application/use_cases/interpret_free_answer.js';
 import {
   ReviewSessionController,
   ReviewSessionState,
@@ -53,6 +59,7 @@ export interface QuizReviewScreenProps {
   aiExplanation: string | ExplainMoreResponse | null;
   streamingAiText?: string;
   freeAnswerEvaluation?: ValidatedVerdictResult | null;
+  consensusEvaluation?: ConsensusEvaluationBreakdown | null;
   modelStatus: ModelRuntimeStatus;
   isGeneratingAi: boolean;
   aiError: string | null;
@@ -63,6 +70,8 @@ export interface QuizReviewScreenProps {
   onSubmitAnswer: () => void;
   onRequestExplainMore: (language: 'en' | 'fil') => void;
   onRequestInterpretFreeAnswer?: () => void;
+  onRequestConsensusInterpretation?: () => void;
+  onRequestClarification?: (query: string) => void;
   onCancelGeneration: () => void;
   onNextQuestion: () => void;
   onRateCard?: (rating: 'again' | 'know') => void;
@@ -87,6 +96,7 @@ export function QuizReviewScreen({
   aiExplanation,
   streamingAiText,
   freeAnswerEvaluation,
+  consensusEvaluation,
   modelStatus,
   isGeneratingAi,
   aiError,
@@ -97,6 +107,8 @@ export function QuizReviewScreen({
   onSubmitAnswer,
   onRequestExplainMore,
   onRequestInterpretFreeAnswer,
+  onRequestConsensusInterpretation,
+  onRequestClarification,
   onCancelGeneration,
   onNextQuestion,
   onRateCard,
@@ -106,6 +118,43 @@ export function QuizReviewScreen({
   const [isInputFocused, setIsInputFocused] = useState(false);
   const [isFlashcardRevealed, setIsFlashcardRevealed] = useState(false);
   const [isRatingCard, setIsRatingCard] = useState(false);
+
+  // Derive consensus breakdown from consensusEvaluation or synthesize from freeAnswerEvaluation
+  const activeConsensus: ConsensusEvaluationBreakdown | null =
+    consensusEvaluation ??
+    (freeAnswerEvaluation && question
+      ? {
+          runId: 'eval_consensus_preview',
+          questionId: question.id,
+          studentAnswer: freeTextInput,
+          numSamples: 1,
+          samples: [freeAnswerEvaluation],
+          verdictDistribution: {
+            equivalent: freeAnswerEvaluation.verdict === 'equivalent' ? 1 : 0,
+            partially_equivalent:
+              freeAnswerEvaluation.verdict === 'partially_equivalent' ? 1 : 0,
+            incorrect: freeAnswerEvaluation.verdict === 'incorrect' ? 1 : 0,
+            ambiguous: freeAnswerEvaluation.verdict === 'ambiguous' ? 1 : 0,
+          },
+          winningVerdict: freeAnswerEvaluation.verdict,
+          averageConfidence: freeAnswerEvaluation.confidence,
+          agreementRate: 1.0,
+          winningEvaluation: freeAnswerEvaluation,
+          guardrailSummary: {
+            malformedJsonCount:
+              freeAnswerEvaluation.guardrailTriggered === 'MALFORMED_JSON' ? 1 : 0,
+            hallucinatedEvidenceCount:
+              freeAnswerEvaluation.guardrailTriggered === 'HALLUCINATED_EVIDENCE'
+                ? 1
+                : 0,
+            lowConfidenceCount:
+              freeAnswerEvaluation.guardrailTriggered === 'LOW_CONFIDENCE' ? 1 : 0,
+            passedCount: freeAnswerEvaluation.guardrailTriggered ? 0 : 1,
+            allPassed: !freeAnswerEvaluation.guardrailTriggered,
+          },
+          durationMs: 0,
+        }
+      : null);
 
   // Reset flashcard reveal state when advancing to a new question
   useEffect(() => {
@@ -445,7 +494,17 @@ export function QuizReviewScreen({
                   : 'VERIFIED TEXTBOOK REFERENCE'}
               </Text>
               {supportingPassages.map((item) => (
-                <EvidenceCard key={item.passage.id} retrievedPassage={item} />
+                <View key={item.passage.id} style={styles.evidenceItemWrapper}>
+                  <EvidenceCard retrievedPassage={item} />
+                  <View style={styles.evidenceTierBadgeRow}>
+                    <RetrievalTierBadge
+                      tier={
+                        item.tier ||
+                        (item.strategy === 'linked' ? 'tier1_direct' : 'fts5')
+                      }
+                    />
+                  </View>
+                </View>
               ))}
             </View>
           )}
@@ -455,92 +514,8 @@ export function QuizReviewScreen({
             <View style={styles.rubricContainer}>
               <View style={styles.divider} />
               <Text style={styles.aiHeading}>AI Semantic Rubric Evaluation</Text>
-              {freeAnswerEvaluation ? (
-                <View style={styles.rubricResultCard}>
-                  <View style={styles.rubricHeaderRow}>
-                    <CSCChipBadge
-                      label={
-                        freeAnswerEvaluation.verdict === 'equivalent'
-                          ? 'Equivalent (Full Credit)'
-                          : freeAnswerEvaluation.verdict ===
-                            'partially_equivalent'
-                          ? 'Partially Equivalent'
-                          : freeAnswerEvaluation.verdict === 'ambiguous'
-                          ? 'Ambiguous (Needs Review)'
-                          : 'Incorrect'
-                      }
-                      variant={
-                        freeAnswerEvaluation.verdict === 'equivalent'
-                          ? 'success'
-                          : freeAnswerEvaluation.verdict ===
-                            'partially_equivalent'
-                          ? 'warning'
-                          : freeAnswerEvaluation.verdict === 'ambiguous'
-                          ? 'accentRed'
-                          : 'neutral'
-                      }
-                    />
-                    <Text style={styles.confidenceText}>
-                      Confidence:{' '}
-                      {Math.round(freeAnswerEvaluation.confidence * 100)}%
-                    </Text>
-                  </View>
-
-                  {freeAnswerEvaluation.matchedConcepts.length > 0 && (
-                    <View style={styles.conceptSection}>
-                      <Text style={styles.conceptSectionTitle}>
-                        Matched Concepts:
-                      </Text>
-                      <View style={styles.conceptBadgeRow}>
-                        {freeAnswerEvaluation.matchedConcepts.map(
-                          (concept, cIdx) => (
-                            <CSCChipBadge
-                              key={`matched-${cIdx}`}
-                              label={concept}
-                              variant="success"
-                            />
-                          )
-                        )}
-                      </View>
-                    </View>
-                  )}
-
-                  {freeAnswerEvaluation.missingConcepts.length > 0 && (
-                    <View style={styles.conceptSection}>
-                      <Text style={styles.conceptSectionTitle}>
-                        Missing Concepts:
-                      </Text>
-                      <View style={styles.conceptBadgeRow}>
-                        {freeAnswerEvaluation.missingConcepts.map(
-                          (concept, cIdx) => (
-                            <CSCChipBadge
-                              key={`missing-${cIdx}`}
-                              label={concept}
-                              variant="warning"
-                            />
-                          )
-                        )}
-                      </View>
-                    </View>
-                  )}
-
-                  {freeAnswerEvaluation.guardrailTriggered && (
-                    <View style={styles.guardrailNotice}>
-                      <Text style={styles.guardrailText}>
-                        Guardrail Triggered:{' '}
-                        {freeAnswerEvaluation.guardrailTriggered}
-                      </Text>
-                    </View>
-                  )}
-
-                  {freeAnswerEvaluation.requiresManualReview && (
-                    <View style={styles.manualReviewNotice}>
-                      <Text style={styles.manualReviewText}>
-                        Manual Review Recommended
-                      </Text>
-                    </View>
-                  )}
-                </View>
+              {activeConsensus ? (
+                <BestOfNConsensusCard breakdown={activeConsensus} />
               ) : onRequestInterpretFreeAnswer ? (
                 <CSCButton
                   title={
@@ -551,7 +526,10 @@ export function QuizReviewScreen({
                   variant="secondary"
                   loading={isGeneratingAi || isModelBusyLoading}
                   disabled={isModelUnavailable || isGeneratingAi}
-                  onPress={onRequestInterpretFreeAnswer}
+                  onPress={
+                    onRequestConsensusInterpretation ??
+                    onRequestInterpretFreeAnswer
+                  }
                 />
               ) : null}
             </View>
@@ -576,6 +554,35 @@ export function QuizReviewScreen({
               </Text>
             </ContentCard>
           )}
+
+          {/* Follow-Up Clarification Bar with Distractor Elimination Chips */}
+          {explanationText &&
+            !isGeneratingAi &&
+            question.choices &&
+            question.choices.length > 0 && (
+              <FollowUpClarificationBar
+                choices={question.choices}
+                canonicalChoiceId={submissionResult.canonicalChoiceId}
+                selectedChoiceId={selectedChoiceId}
+                isLoading={isGeneratingAi}
+                onAskDistractor={(distractorChoice) => {
+                  if (onRequestClarification) {
+                    onRequestClarification(
+                      `Why is Choice ${distractorChoice.choiceKey} wrong? Choice text: ${distractorChoice.text}`
+                    );
+                  } else {
+                    onRequestExplainMore('en');
+                  }
+                }}
+                onCustomQuerySubmit={(query) => {
+                  if (onRequestClarification) {
+                    onRequestClarification(query);
+                  } else {
+                    onRequestExplainMore('en');
+                  }
+                }}
+              />
+            )}
 
           {aiError && (
             <View style={styles.errorBox} accessibilityRole="alert">
@@ -783,6 +790,13 @@ const styles = StyleSheet.create({
   passagesContainer: {
     gap: spacing.sm,
     marginTop: spacing.xs,
+  },
+  evidenceItemWrapper: {
+    marginBottom: spacing.xs,
+  },
+  evidenceTierBadgeRow: {
+    marginTop: spacing.xs,
+    alignItems: 'flex-start',
   },
   metadataHeading: {
     fontSize: typography.caption.fontSize,

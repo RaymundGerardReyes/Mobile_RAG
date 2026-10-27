@@ -7,6 +7,7 @@ import { DiagnosticsLogger, ErrorCodes } from '../../diagnostics/diagnostics_log
 export interface ExplainMoreRequest {
   questionId: string;
   language?: 'en' | 'fil';
+  followUpQuery?: string;
   signal?: AbortSignal;
   onChunk?: (chunk: string) => void;
 }
@@ -56,12 +57,35 @@ export class ExplainMore {
       }
     }
 
-    // Retrieve supporting passages
-    const passages = await this.passageRetriever.retrieveForQuestion(
-      question.id,
-      question.stem,
-      3
-    );
+    // Retrieve supporting passages (iterative if followUpQuery provided and supported)
+    let passages: any[] = [];
+    if (
+      request.followUpQuery &&
+      typeof (this.passageRetriever as any).retrieveIterativeEvidence === 'function'
+    ) {
+      try {
+        const iterativeResult = await (this.passageRetriever as any).retrieveIterativeEvidence(
+          question.id,
+          question.stem,
+          canonicalText,
+          request.followUpQuery,
+          3
+        );
+        passages = iterativeResult.passages || [];
+      } catch {
+        passages = await this.passageRetriever.retrieveForQuestion(
+          question.id,
+          question.stem,
+          3
+        );
+      }
+    } else {
+      passages = await this.passageRetriever.retrieveForQuestion(
+        question.id,
+        question.stem,
+        3
+      );
+    }
 
     // Build bounded prompt (max 1024 tokens)
     const builtPrompt = PromptBuilder.buildPrompt({
@@ -71,6 +95,7 @@ export class ExplainMore {
       supportingPassages: passages,
       language: request.language ?? 'en',
       task: 'explain',
+      followUpQuery: request.followUpQuery,
     });
 
     let fullExplanation = '';
