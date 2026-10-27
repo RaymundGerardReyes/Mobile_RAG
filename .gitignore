@@ -50,3 +50,4 @@ temp_*
 *.scratch.*
 scratch/
 temp/
+.agents/teamwork/

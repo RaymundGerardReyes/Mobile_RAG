@@ -55,3 +55,34 @@ Jupyter Notebooks frequently bitrot due to hidden interactive state, missing dep
   3. Compiles code cell strings to verify Python syntax.
   4. Executes cells sequentially in an isolated namespace dictionary to verify end-to-end execution without errors.
 
+## 7. Dual-Mode Offline/Online Tokenizer & Cloud GPU Guidance Invariant
+In fresh cloud instances or Google Colab environments, local developer disk caches (such as `~/.cache/huggingface/hub/...`) do not exist. Hardcoding `local_files_only=True` triggers `LocalEntryNotFoundError` because outgoing traffic is disabled for cache lookups.
+- **Mandatory Invariant**: Always attempt local pre-cached snapshots first (for isolated offline and CI execution). If not present on disk, gracefully attempt online downloading with `local_files_only=False`.
+- **Cloud Accelerator Invariant**: When running in notebook environments such as Google Colab, detect if compute device is CPU and print explicit visual guidance explaining how to activate free GPU hardware accelerators (e.g., `Runtime -> Change runtime type -> T4 GPU`).
+
+## 8. PEFT TorchAO Cloud Incompatibility Guardrail
+Cloud notebook environments such as Google Colab often have older versions of `torchao` pre-installed (e.g., `0.10.0`). Modern `peft` requires `torchao >= 0.16.0` and raises an `ImportError` in `peft.import_utils.is_torchao_available()` rather than returning `False`.
+- **Mandatory Invariant**: In training scripts and notebooks that configure LoRA via `peft`, always apply a protective monkey-patch before and during model initialization:
+  ```python
+  try:
+      import peft.import_utils
+      try:
+          peft.import_utils.is_torchao_available()
+      except (ImportError, Exception):
+          peft.import_utils.is_torchao_available = lambda: False
+  except Exception:
+      pass
+
+  # Re-apply guard across all loaded peft submodules before get_peft_model()
+  import sys
+  for mod_name, mod in list(sys.modules.items()):
+      if mod_name.startswith("peft") and hasattr(mod, "is_torchao_available"):
+          try:
+              setattr(mod, "is_torchao_available", lambda: False)
+          except Exception:
+              pass
+  ```
+  This ensures seamless fallback to standard PyTorch LoRA layers without requiring manual pip uninstall or upgrade commands from the user.
+
+
+
