@@ -18,6 +18,17 @@ import sys
 try:
     import torch
     from datasets import Dataset
+
+    # Cloud environment guardrail: Colab pre-installs torchao==0.10.0, which causes modern peft to raise ImportError
+    try:
+        import peft.import_utils
+        try:
+            peft.import_utils.is_torchao_available()
+        except (ImportError, Exception):
+            peft.import_utils.is_torchao_available = lambda: False
+    except Exception:
+        pass
+
     from peft import LoraConfig, get_peft_model, TaskType
     from transformers import (
         AutoTokenizer,

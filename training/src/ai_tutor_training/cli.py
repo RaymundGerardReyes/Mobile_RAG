@@ -207,6 +207,94 @@ if click is not None:
         )
         click.echo(f"Successfully generated ChatML dataset at {out_path}.")
 
+    @cli.command("train-lora")
+    @click.option("--config", "-c", default="configs/pipeline.yaml", help="Path to pipeline YAML config.")
+    @click.option("--dataset", help="Path to ChatML SFT dataset JSONL.")
+    @click.option("--output-dir", help="Output directory for LoRA adapter weights.")
+    @click.option("--dry-run", is_flag=True, help="Validate dataset & config without GPU execution.")
+    def cmd_train_lora(
+        config: str,
+        dataset: str | None,
+        output_dir: str | None,
+        dry_run: bool,
+    ) -> None:
+        """Run Stage 5 QLoRA fine-tuning on the grounded ChatML SFT dataset."""
+        from ai_tutor_training.stages.train import train
+
+        cfg = load_yaml_config(config) if Path(config).exists() else {}
+        summary = train(
+            sft_dataset_path=dataset,
+            output_adapter_dir=output_dir,
+            config=cfg,
+            dry_run=dry_run,
+        )
+        click.echo(
+            f"Stage 5 LoRA training {summary['status']}: "
+            f"{summary['train_samples']} samples ({summary['base_model_repo']})."
+        )
+
+    @cli.command("export-gguf")
+    @click.option("--config", "-c", default="configs/pipeline.yaml", help="Path to pipeline YAML config.")
+    @click.option("--adapter-dir", help="Path to trained LoRA adapter directory.")
+    @click.option("--output", help="Output GGUF file path.")
+    @click.option("--manifest", help="Output model-manifest.json path.")
+    def cmd_export_gguf(
+        config: str,
+        adapter_dir: str | None,
+        output: str | None,
+        manifest: str | None,
+    ) -> None:
+        """Run Stage 6 GGUF quantization and emit a verified model-manifest.json."""
+        from ai_tutor_training.stages.export_gguf import export_gguf
+
+        cfg = load_yaml_config(config) if Path(config).exists() else {}
+        model_manifest = export_gguf(
+            adapter_dir=adapter_dir,
+            output_gguf_path=output,
+            model_manifest_path=manifest,
+            config=cfg,
+        )
+        click.echo(
+            f"Exported GGUF model ({model_manifest['quantization']}) "
+            f"with SHA-256: {model_manifest['file_sha256']}"
+        )
+
+    @cli.command("eval-consensus")
+    @click.option("--db", default="artifacts/content_pack.db", help="Path to content_pack.db.")
+    @click.option("--question-id", "-q", required=True, help="Question ID (e.g., q0004).")
+    @click.option("--answer", "-a", required=True, help="Student free-text response to evaluate.")
+    @click.option("--samples", "-n", default=3, type=int, help="Number of probabilistic consensus samples.")
+    @click.option("--temperature", default=0.65, type=float, help="Sampling temperature.")
+    def cmd_eval_consensus(
+        db: str,
+        question_id: str,
+        answer: str,
+        samples: int,
+        temperature: float,
+    ) -> None:
+        """Evaluate a free-text answer using Best-of-N probabilistic self-consistency voting."""
+        from ai_tutor_training.probabilistic_engine import (
+            ProbabilisticSamplingConfig,
+            ProbabilisticTutorEngine,
+        )
+
+        sampling_cfg = ProbabilisticSamplingConfig(
+            do_sample=temperature > 0.0,
+            temperature=temperature,
+            num_consensus_samples=samples,
+        )
+        engine = ProbabilisticTutorEngine(db_path=db, sampling_config=sampling_cfg)
+        result = engine.evaluate_free_answer_with_consensus(
+            question_id=question_id,
+            user_answer=answer,
+            num_samples=samples,
+        )
+        click.echo(f"=== Probabilistic Consensus Verdict ({result.num_samples} samples) ===")
+        click.echo(f"Majority Verdict:    {result.final_result.verdict}")
+        click.echo(f"Score Assigned:      {result.final_result.score}")
+        click.echo(f"Average Confidence:  {result.average_confidence:.2f}")
+        click.echo(f"Vote Distribution:   {json.dumps(result.verdict_distribution)}")
+
 
 def main() -> None:
     if click is not None:

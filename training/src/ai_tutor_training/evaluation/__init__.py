@@ -29,6 +29,9 @@ class EvaluationResult:
     confidence: float = 0.0
 
 
+FreeAnswerScoreResult = EvaluationResult
+
+
 def extract_json_from_text(raw_text: str) -> dict[str, Any] | None:
     """Safely parse JSON from raw LLM output, handling markdown blocks if present."""
     if not raw_text or not raw_text.strip():
