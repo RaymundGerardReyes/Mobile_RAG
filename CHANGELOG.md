@@ -1,6 +1,28 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+## [app v0.4.0] - 2026-10-28
+
+### Added
+- **Probabilistic RAG UI Primitives (`mobile/src/components/ProbabilisticRagPrimitives.tsx`)**:
+  - `<RetrievalTierBadge>`: WCAG AAA/AA compliant status chips mapping all 5 retrieval tiers (`tier1_direct`, `tier2_strict_and`, `tier3_broad_or`, `linked`, `fts5`) with active indicator dots.
+  - `<BestOfNConsensusCard>`: Proportional $N=3$ stochastic voting distribution bar, average confidence meter, and 4-tier guardrail matrix.
+  - `<FollowUpClarificationBar>`: Interactive distractor quick-ask chips ("Why is Choice X wrong?") and Apple HIG $\ge 44\text{pt}$ custom query input.
+- **Probabilistic Consensus Sampling (`mobile/src/application/use_cases/interpret_free_answer.ts`)**:
+  - `executeConsensus(questionId, studentAnswer, numSamples = 3)`: Sequential stochastic sampling obeying the single-active generation invariant (`CONCURRENT_GENERATION_NOT_ALLOWED`) with 3-tier confidence tie-breaking.
+- **Controller & Presentation Layer Bridge (`mobile/src/controllers/review_session_controller.ts`, `mobile/App.tsx`)**:
+  - Added `consensusEvaluation` state field and implemented `requestConsensusInterpretation` and `requestClarification`.
+  - Extended `ExplainMoreRequest` and `PromptBuilder` to ground `followUpQuery` using Tier 3 iterative RAG distractor search.
+- **Stage 6 GGUF Export & Manifest Generator (`training/src/ai_tutor_training/stages/export_gguf.py`, `cli.py`)**:
+  - Implemented LoRA adapter merge, GGUF quantization export, and contract-valid `model-manifest.json` generation.
+- **Google Colab Cloud Training Compatibility (`training/notebooks/training_pipeline.ipynb`)**:
+  - Dynamic multi-tier `REPO_ROOT` path resolution and sample fixture auto-seeding for gitignored artifacts.
+  - Dual-mode offline cache / online download for HuggingFace tokenizers.
+  - Cloud GPU hardware detection and interactive T4 acceleration banner.
+  - Self-healing monkey-patch for PEFT's incompatible `torchao` check (`peft.import_utils.is_torchao_available`).
+- **Expo SDK 58 Upgrade (`mobile/package.json`, `mobile/app.json`, `mobile/metro.config.js`)**:
+  - Upgraded mobile project to Expo SDK 58 (`~58.0.19`), React Native `0.88.0`, and React `19.3.0` for latest Expo Go iOS and simulator support.
+
 ## [app v0.3.0] - 2026-10-16
 
 ### Added

@@ -3,7 +3,7 @@
     "name": "CSC AI Tutor",
     "slug": "ai-tutor-mobile",
     "scheme": "csc-ai-tutor",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "ios": {

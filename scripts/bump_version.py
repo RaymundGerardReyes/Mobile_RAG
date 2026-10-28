@@ -122,13 +122,13 @@ def detect_bump_from_git_commits(repo_root: Path, tag_prefix: str = "v") -> Lite
     return "patch"
 
 
-def update_file_regex(file_path: Path, pattern: str, replacement: str, dry_run: bool = False) -> bool:
+def update_file_regex(file_path: Path, pattern: str, replacement: str, dry_run: bool = False, count: int = 1) -> bool:
     """Safely replace a regex pattern in a file."""
     if not file_path.exists():
         return False
     content = file_path.read_text(encoding="utf-8")
-    new_content, count = re.subn(pattern, replacement, content, count=1, flags=re.MULTILINE)
-    if count == 0:
+    new_content, n_subs = re.subn(pattern, replacement, content, count=count, flags=re.MULTILINE)
+    if n_subs == 0:
         return False
     if not dry_run:
         file_path.write_text(new_content, encoding="utf-8")
@@ -160,16 +160,17 @@ def bump_app(repo_root: Path, bump: Literal["major", "minor", "patch"], dry_run:
     new_ver = current_ver.bump(bump)
 
     files_to_update = [
-        (repo_root / "pyproject.toml", r'^(version\s*=\s*)"[^"]+"', rf'\g<1>"{new_ver}"'),
-        (repo_root / "training" / "pyproject.toml", r'^(version\s*=\s*)"[^"]+"', rf'\g<1>"{new_ver}"'),
-        (repo_root / "training" / "src" / "ai_tutor_training" / "__init__.py", r'(__version__\s*=\s*)"[^"]+"', rf'\g<1>"{new_ver}"'),
-        (repo_root / "mobile" / "package.json", r'("version"\s*:\s*)"[^"]+"', rf'\g<1>"{new_ver}"'),
-        (repo_root / "mobile" / "package-lock.json", r'("version"\s*:\s*)"[^"]+"', rf'\g<1>"{new_ver}"'),
+        (repo_root / "pyproject.toml", r'^(version\s*=\s*)"[^"]+"', rf'\g<1>"{new_ver}"', 1),
+        (repo_root / "training" / "pyproject.toml", r'^(version\s*=\s*)"[^"]+"', rf'\g<1>"{new_ver}"', 1),
+        (repo_root / "training" / "src" / "ai_tutor_training" / "__init__.py", r'(__version__\s*=\s*)"[^"]+"', rf'\g<1>"{new_ver}"', 1),
+        (repo_root / "mobile" / "package.json", r'("version"\s*:\s*)"[^"]+"', rf'\g<1>"{new_ver}"', 1),
+        (repo_root / "mobile" / "app.json", r'("version"\s*:\s*)"[^"]+"', rf'\g<1>"{new_ver}"', 1),
+        (repo_root / "mobile" / "package-lock.json", r'("version"\s*:\s*)"[^"]+"', rf'\g<1>"{new_ver}"', 2),
     ]
 
-    for file_path, pattern, repl in files_to_update:
+    for file_path, pattern, repl, count in files_to_update:
         if file_path.exists():
-            update_file_regex(file_path, pattern, repl, dry_run=dry_run)
+            update_file_regex(file_path, pattern, repl, dry_run=dry_run, count=count)
 
     return current_ver, new_ver
 
@@ -210,7 +211,13 @@ def append_changelog(repo_root: Path, component: str, new_ver: str, dry_run: boo
     if not dry_run:
         if changelog_path.exists():
             content = changelog_path.read_text(encoding="utf-8")
-            changelog_path.write_text(content + entry, encoding="utf-8")
+            header_prefix = "# Changelog\nAll notable changes to this project will be documented in this file.\n"
+            if content.startswith(header_prefix):
+                rest = content[len(header_prefix):]
+                new_content = header_prefix + entry + rest
+            else:
+                new_content = header_prefix + entry + "\n" + content
+            changelog_path.write_text(new_content, encoding="utf-8")
         else:
             header = "# Changelog\nAll notable changes to this project will be documented in this file.\n"
             changelog_path.write_text(header + entry, encoding="utf-8")

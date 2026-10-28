@@ -8,7 +8,7 @@ from ai_tutor_training.iterative_justifier import (
     extract_search_keywords,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     "DatasetAnnotator",
