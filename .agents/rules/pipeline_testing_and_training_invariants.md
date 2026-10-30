@@ -84,5 +84,18 @@ Cloud notebook environments such as Google Colab often have older versions of `t
   ```
   This ensures seamless fallback to standard PyTorch LoRA layers without requiring manual pip uninstall or upgrade commands from the user.
 
+## 9. Monorepo Multi-Manifest SemVer Parity Invariant
+Every semantic version increment (`major`, `minor`, `patch`) must update all 6 package manifests atomically:
+1. Root `pyproject.toml` (`version = "X.Y.Z"`)
+2. Training `training/pyproject.toml` (`version = "X.Y.Z"`)
+3. Python package root `training/src/ai_tutor_training/__init__.py` (`__version__ = "X.Y.Z"`)
+4. Mobile package `mobile/package.json` (`"version": "X.Y.Z"`)
+5. Mobile lockfile `mobile/package-lock.json` (both root `version` and `packages[""].version`)
+6. Expo configuration `mobile/app.json` (`"version": "X.Y.Z"`)
+
+### Changelog Maintenance Invariant
+- All version increments in `CHANGELOG.md` must follow reverse-chronological ordering (newest version immediately beneath the top-level `# Changelog` header).
+- Release notes must categorize changes under `### Added`, `### Changed`, and `### Fixed`.
+
 
 
