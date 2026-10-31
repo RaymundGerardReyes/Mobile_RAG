@@ -214,6 +214,7 @@ def run_lora_training(
         save_strategy="no",
         report_to="none",
         fp16=torch.cuda.is_available(),
+        use_cpu=not torch.cuda.is_available(),
         max_length=512,
         dataloader_num_workers=0,
     )

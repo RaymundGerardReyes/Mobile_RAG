@@ -84,6 +84,7 @@ def test_code_cells_syntax_and_import_contracts():
     assert "reviewer_sft_chatml.jsonl" in full_code
     assert "LoraConfig" in full_code
     assert "SFTTrainer" in full_code
+    assert "use_cpu=not cuda_available" in full_code
 
 
 @pytest.mark.integration

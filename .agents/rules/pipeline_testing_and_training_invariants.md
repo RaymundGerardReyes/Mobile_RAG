@@ -105,5 +105,13 @@ Cloud environments (e.g., Google Colab, Kaggle) provide base Python and PyTorch 
   3. **Documentation Banner**: Notebook headers and Stage 1 Markdown must explicitly document the one-line installation command:
      `!pip install -q "trl>=0.12.0" "peft>=0.13.0" "datasets>=3.0.0"`
 
+## 11. Cross-Platform SFTConfig Device Flag Invariant (`use_cpu=not cuda_available`)
+In modern Hugging Face `transformers` (v4.45+) and `trl` (v0.12+), `TrainingArguments` and `SFTConfig` validate device targets strictly. When executing in an environment without an active CUDA accelerator (e.g., standard Google Colab CPU runtime, CPU CI runner, or local developer workstations without GPU access), omitting `use_cpu=True` causes `TrainingArguments._validate_args()` to throw:
+`ValueError: Your setup doesn't support bf16/gpu. You need to assign use_cpu if you want to train the model on CPU.`
+- **Mandatory Invariants**:
+  1. **Dynamic Hardware Flag Assignment**: Whenever instantiating `SFTConfig` or `TrainingArguments`, always pass both `fp16=cuda_available` and `use_cpu=not cuda_available` (or `fp16=torch.cuda.is_available()`, `use_cpu=not torch.cuda.is_available()`).
+  2. **Automated Verification**: Notebook and training test suites must assert that `use_cpu=not cuda_available` is present in code cells and that pipeline training completes deterministically regardless of whether CUDA is available.
+
+
 
 

@@ -503,6 +503,7 @@ def create_notebook():
         "    save_strategy='no',\n"
         "    report_to='none',\n"
         "    fp16=cuda_available,\n"
+        "    use_cpu=not cuda_available,\n"
         "    max_length=512,\n"
         "    dataloader_num_workers=0,\n"
         ")\n\n"
