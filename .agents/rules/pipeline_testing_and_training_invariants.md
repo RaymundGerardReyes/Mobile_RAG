@@ -97,5 +97,13 @@ Every semantic version increment (`major`, `minor`, `patch`) must update all 6 p
 - All version increments in `CHANGELOG.md` must follow reverse-chronological ordering (newest version immediately beneath the top-level `# Changelog` header).
 - Release notes must categorize changes under `### Added`, `### Changed`, and `### Fixed`.
 
+## 10. Cloud Notebook Self-Healing Dependency Installation Invariant
+Cloud environments (e.g., Google Colab, Kaggle) provide base Python and PyTorch runtimes, but do not pre-install specialized fine-tuning libraries such as `trl`, `peft`, or `datasets`.
+- **Mandatory Invariants**:
+  1. **Stage 1 Environment Discovery**: Notebooks must dynamically detect cloud environments (`Path('/content').exists() or 'google.colab' in sys.modules or 'kaggle' in sys.modules`) and auto-install missing packages (`trl>=0.12.0`, `peft>=0.13.0`, `datasets>=3.0.0`) via non-interactive `subprocess` before executing pipeline stages.
+  2. **Stage 5 & Stage 6 Self-Healing Import Fallbacks**: Code cells importing `peft`, `datasets`, or `trl` (`from trl import SFTConfig, SFTTrainer`) must wrap imports in `try ... except ImportError` blocks that attempt just-in-time installation via pip before re-importing, providing an actionable error message if pip fails.
+  3. **Documentation Banner**: Notebook headers and Stage 1 Markdown must explicitly document the one-line installation command:
+     `!pip install -q "trl>=0.12.0" "peft>=0.13.0" "datasets>=3.0.0"`
+
 
 
