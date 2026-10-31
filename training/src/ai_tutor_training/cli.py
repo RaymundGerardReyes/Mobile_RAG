@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +25,70 @@ from ai_tutor_training.contracts import validate_jsonl_against_schema
 from ai_tutor_training.stages.build_passages import build_passages
 from ai_tutor_training.stages.extract_textbook import extract_textbook
 from ai_tutor_training.stages.link_qa_pairs import link_qa_pairs
+
+
+def deploy_content_pack_to_mobile(
+    artifacts_dir: Path | str = "training/artifacts",
+    mobile_assets_dir: Path | str = "mobile/assets",
+) -> dict[str, Any]:
+    """Atomically copy content_pack.db and content_pack_manifest.json to mobile/assets/.
+
+    Verifies SHA-256 parity after copying, and removes any legacy live_content_pack.json.
+    """
+    artifacts_path = Path(artifacts_dir)
+    mobile_assets_path = Path(mobile_assets_dir)
+
+    src_db = artifacts_path / "content_pack.db"
+    src_manifest = artifacts_path / "content_pack_manifest.json"
+
+    if not src_db.exists():
+        raise FileNotFoundError(f"Source content pack DB not found at: {src_db}")
+    if not src_manifest.exists():
+        raise FileNotFoundError(f"Source content pack manifest not found at: {src_manifest}")
+
+    mobile_assets_path.mkdir(parents=True, exist_ok=True)
+    dest_db = mobile_assets_path / "content_pack.db"
+    dest_manifest = mobile_assets_path / "content_pack_manifest.json"
+
+    # Atomic copy for DB using a temporary file in the target directory
+    with tempfile.NamedTemporaryFile("wb", dir=mobile_assets_path, delete=False) as tf:
+        temp_db = Path(tf.name)
+        with src_db.open("rb") as f_src:
+            shutil.copyfileobj(f_src, tf)
+    os.replace(temp_db, dest_db)
+
+    # Atomic copy for manifest
+    with tempfile.NamedTemporaryFile("wb", dir=mobile_assets_path, delete=False) as tf:
+        temp_mf = Path(tf.name)
+        with src_manifest.open("rb") as f_src:
+            shutil.copyfileobj(f_src, tf)
+    os.replace(temp_mf, dest_manifest)
+
+    # Verify SHA-256 parity
+    src_db_hash = hashlib.sha256(src_db.read_bytes()).hexdigest()
+    dest_db_hash = hashlib.sha256(dest_db.read_bytes()).hexdigest()
+    if src_db_hash != dest_db_hash:
+        raise ValueError(f"SHA-256 parity check failed for DB: src={src_db_hash} != dest={dest_db_hash}")
+
+    src_mf_hash = hashlib.sha256(src_manifest.read_bytes()).hexdigest()
+    dest_mf_hash = hashlib.sha256(dest_manifest.read_bytes()).hexdigest()
+    if src_mf_hash != dest_mf_hash:
+        raise ValueError(f"SHA-256 parity check failed for manifest: src={src_mf_hash} != dest={dest_mf_hash}")
+
+    # Remove legacy live_content_pack.json if present
+    legacy_json = mobile_assets_path / "live_content_pack.json"
+    removed_legacy = False
+    if legacy_json.exists():
+        legacy_json.unlink()
+        removed_legacy = True
+
+    return {
+        "status": "deployed",
+        "db_sha256": dest_db_hash,
+        "manifest_sha256": dest_mf_hash,
+        "db_size": dest_db.stat().st_size,
+        "removed_legacy_json": removed_legacy,
+    }
 
 
 def load_yaml_config(config_path: Path | str) -> dict[str, Any]:
@@ -89,6 +157,7 @@ if click is not None:
     @click.option("--output", help="Override output content_pack.db path.")
     @click.option("--version", "version", help="Override content pack semantic version.")
     @click.option("--manifest", help="Override output manifest JSON path.")
+    @click.option("--deploy-mobile", is_flag=True, help="Automatically deploy built content pack to mobile/assets.")
     def cmd_build_content_pack(
         config: str,
         questions: str | None,
@@ -96,6 +165,7 @@ if click is not None:
         output: str | None,
         version: str | None,
         manifest: str | None,
+        deploy_mobile: bool = False,
     ) -> None:
         """Build SQLite content pack with FTS5 lexical search."""
         cfg = load_yaml_config(config)
@@ -115,6 +185,27 @@ if click is not None:
             manifest_path=manifest,
         )
         click.echo(f"Successfully built content pack: {db_file}")
+        if deploy_mobile:
+            click.echo("Deploying content pack to mobile assets...")
+            deploy_res = deploy_content_pack_to_mobile(
+                artifacts_dir=Path(out_path).parent,
+            )
+            click.echo(f"Deployed to mobile. SHA-256: {deploy_res['db_sha256']}")
+            if deploy_res["removed_legacy_json"]:
+                click.echo("Cleaned up legacy mobile/assets/live_content_pack.json.")
+
+    @cli.command("deploy-mobile")
+    @click.option("--artifacts-dir", default="training/artifacts", help="Path to training artifacts directory.")
+    @click.option("--mobile-assets-dir", default="mobile/assets", help="Path to mobile assets directory.")
+    def cmd_deploy_mobile(artifacts_dir: str, mobile_assets_dir: str) -> None:
+        """Deploy compiled content_pack.db and manifest to mobile assets with SHA-256 parity check."""
+        result = deploy_content_pack_to_mobile(artifacts_dir=artifacts_dir, mobile_assets_dir=mobile_assets_dir)
+        click.echo(
+            f"Successfully deployed content pack to mobile ({result['db_size']} bytes). "
+            f"SHA-256: {result['db_sha256']}"
+        )
+        if result["removed_legacy_json"]:
+            click.echo("Cleaned up legacy mobile/assets/live_content_pack.json.")
 
     @cli.command("validate")
     @click.option("--artifact", required=True, help="Path to JSONL artifact to validate.")
@@ -132,7 +223,8 @@ if click is not None:
 
     @cli.command("run-all")
     @click.option("--config", "-c", default="configs/pipeline.yaml", help="Path to pipeline YAML config.")
-    def cmd_run_all(config: str) -> None:
+    @click.option("--deploy-mobile", is_flag=True, help="Automatically deploy built content pack to mobile/assets.")
+    def cmd_run_all(config: str, deploy_mobile: bool = False) -> None:
         """Run stages 1-3 and build content pack in sequence."""
         cfg = load_yaml_config(config)
         pdf_path = cfg.get("source", {}).get("pdf_path", "data/raw/reviewer.pdf")
@@ -166,6 +258,14 @@ if click is not None:
             manifest_path=cp_manifest,
         )
         click.echo("Pipeline completed successfully!")
+        if deploy_mobile:
+            click.echo("Deploying content pack to mobile assets...")
+            deploy_res = deploy_content_pack_to_mobile(
+                artifacts_dir=Path(cp_out).parent,
+            )
+            click.echo(f"Deployed to mobile. SHA-256: {deploy_res['db_sha256']}")
+            if deploy_res["removed_legacy_json"]:
+                click.echo("Cleaned up legacy mobile/assets/live_content_pack.json.")
 
     @cli.command("justify")
     @click.option("--db", default="artifacts/content_pack.db", help="Path to content pack SQLite database.")
@@ -195,7 +295,8 @@ if click is not None:
     @click.option("--db", default="artifacts/content_pack.db", help="Path to content pack database.")
     @click.option("--output", "-o", default="artifacts/reviewer_sft_chatml.jsonl", help="Path to output ChatML JSONL.")
     @click.option("--version", default="2026.10.1", help="Content pack version.")
-    def cmd_export_sft(db: str, output: str, version: str) -> None:
+    @click.option("--max-passage-words", default=140, type=int, help="Max words per passage for ChatML token budgeting.")
+    def cmd_export_sft(db: str, output: str, version: str, max_passage_words: int) -> None:
         """Export Grounded RAG ChatML training records using 3-tier Iterative RAG retrieval."""
         from ai_tutor_training.annotation import build_iterative_sft_chatml_dataset
 
@@ -204,6 +305,7 @@ if click is not None:
             db_path=db,
             output_chatml_path=output,
             content_version=version,
+            max_passage_words=max_passage_words,
         )
         click.echo(f"Successfully generated ChatML dataset at {out_path}.")
 

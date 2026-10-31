@@ -34,6 +34,14 @@ from ai_tutor_training.prompting import (
 )
 
 
+def _clamp_passage_words(text: str, max_words: int = 140) -> str:
+    """Clamp passage text to max_words so ChatML sequences fit within 512 tokens."""
+    words = text.split()
+    if max_words <= 0 or len(words) <= max_words:
+        return text
+    return " ".join(words[:max_words]) + " ..."
+
+
 class DatasetAnnotator:
     """Helper class to annotate passages and multi-subject questions with strict contract validation."""
 
@@ -213,7 +221,7 @@ class DatasetAnnotator:
             version=self.content_version,
         )
 
-    def export_sft_chatml_jsonl(self, output_sft_path: Path | str) -> Path:
+    def export_sft_chatml_jsonl(self, output_sft_path: Path | str, max_passage_words: int = 140) -> Path:
         """Generate a Grounded RAG SFT dataset in ChatML format for Stage 5 Qwen3 LoRA fine-tuning.
 
         Each record conforms to:
@@ -245,7 +253,7 @@ class DatasetAnnotator:
             if primary_passage and q.get("canonical_explanation"):
                 clean_stem = sanitize_data_content(q["stem"])
                 clean_answer = sanitize_data_content(q["canonical_answer"])
-                clean_passage = sanitize_data_content(primary_passage["text"])
+                clean_passage = _clamp_passage_words(sanitize_data_content(primary_passage["text"]), max_words=max_passage_words)
                 clean_note = sanitize_data_content(q.get("canonical_explanation") or "")
 
                 choices_block = ""
@@ -286,11 +294,18 @@ class DatasetAnnotator:
 
             # 2. Feature B: InterpretFreeAnswer SFT Example for Identification / Essay
             if q["question_type"] in ("identification", "essay") and matching_passages:
+                passages_clamped = [
+                    {
+                        **p,
+                        "text": _clamp_passage_words(p["text"], max_words=max_passage_words),
+                    }
+                    for p in matching_passages[:2]
+                ]
                 eval_prompt_full = build_free_answer_prompt(
                     stem=q["stem"],
                     canonical_answer=q["canonical_answer"],
                     user_answer=q["canonical_answer"],  # Positive gold equivalent submission
-                    passages=matching_passages[:2],
+                    passages=passages_clamped,
                 )
 
                 # Extract system vs user content from generated prompt
@@ -338,13 +353,19 @@ class DatasetAnnotator:
 
         return sft_path
 
-    def export_iterative_sft_chatml_jsonl(self, db_path: Path | str, output_sft_path: Path | str) -> Path:
+    def export_iterative_sft_chatml_jsonl(
+        self,
+        db_path: Path | str,
+        output_sft_path: Path | str,
+        max_passage_words: int = 140,
+    ) -> Path:
         """Export Grounded RAG ChatML dataset using 3-tier Iterative RAG retrieval against content_pack.db."""
         return build_iterative_sft_chatml_dataset(
             db_path=db_path,
             output_chatml_path=output_sft_path,
             content_version=self.content_version,
             verdict_schema_path=self.contracts_dir / "free-answer-verdict.schema.json",
+            max_passage_words=max_passage_words,
         )
 
 
@@ -353,6 +374,7 @@ def build_iterative_sft_chatml_dataset(
     output_chatml_path: Path | str,
     content_version: str = "2026.10.1",
     verdict_schema_path: Path | str | None = None,
+    max_passage_words: int = 140,
 ) -> Path:
     """Build Grounded RAG ChatML dataset by running 3-tier iterative FTS5 retrieval on content_pack.db.
 
@@ -439,7 +461,7 @@ def build_iterative_sft_chatml_dataset(
 
                 context_blocks = []
                 for ev in evidence_list[:2]:
-                    clean_ev_text = sanitize_data_content(ev.text)
+                    clean_ev_text = _clamp_passage_words(sanitize_data_content(ev.text), max_words=max_passage_words)
                     context_blocks.append(f"[EXCERPT (Page {ev.start_page})]:\n{clean_ev_text}")
                 context_str = "\n\n".join(context_blocks)
 
@@ -487,7 +509,7 @@ def build_iterative_sft_chatml_dataset(
                         "chapter": ev.chapter,
                         "start_page": ev.start_page,
                         "end_page": ev.end_page,
-                        "text": ev.text,
+                        "text": _clamp_passage_words(ev.text, max_words=max_passage_words),
                     }
                     for ev in evidence_list[:2]
                 ]

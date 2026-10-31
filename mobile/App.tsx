@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { StatusBar, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { colors } from './src/theme/tokens.js';
 import {
   ReviewHomeScreen,
@@ -34,216 +34,10 @@ import {
   ReviewSessionState,
 } from './src/controllers/review_session_controller.js';
 import { DiagnosticsLogger } from './src/diagnostics/diagnostics_logger.js';
+import { SqliteQuestionRepository } from './src/data/sqlite/sqlite_question_repository.js';
+import { SqlitePassageRetriever } from './src/data/sqlite/sqlite_passage_retriever.js';
+import { openContentPackDatabase } from './src/data/sqlite/db_factory.js';
 
-import liveContentPack from './assets/live_content_pack.json' with { type: 'json' };
-
-const LIVE_TOPICS: TopicSummary[] = (liveContentPack.topicSummaries || []) as TopicSummary[];
-const LIVE_QUESTIONS: Question[] = (liveContentPack.questions || []) as unknown as Question[];
-const LIVE_PASSAGES_MAP: Record<string, RetrievedPassage[]> = Object.fromEntries(
-  Object.entries(liveContentPack.questionPassagesMap || {}).map(([qId, passages]) => [
-    qId,
-    (passages as Array<{ passage: any; source?: string; relevanceScore?: number }>).map((p) => ({
-      passage: p.passage,
-      strategy: (p.source === 'linked' ? 'linked' : 'fts5') as 'linked' | 'fts5',
-      confidence: 'high',
-      rank: 1,
-    })),
-  ])
-);
-
-/**
- * In-memory repository implementing QuestionRepository & PassageRetriever.
- * Dynamically tracks student answer attempts and recalculates topic summaries.
- */
-class InMemoryQuestionRepository implements QuestionRepository, PassageRetriever {
-  private questions: Question[];
-  private topics: TopicSummary[];
-  private passagesMap: Record<string, RetrievedPassage[]>;
-  private attempts: AnswerAttempt[] = [];
-
-  constructor(
-    questions: Question[],
-    topics: TopicSummary[],
-    passages: Record<string, RetrievedPassage[]>
-  ) {
-    this.questions = [...questions];
-    this.topics = topics.map((t) => ({ ...t, topic: { ...t.topic } }));
-    this.passagesMap = passages;
-  }
-
-  async getQuestionById(id: string): Promise<Question | null> {
-    return this.questions.find((q) => q.id === id) || null;
-  }
-
-  async getNextQuestions(query: QuestionSelectionQuery): Promise<Question[]> {
-    let result = [...this.questions];
-
-    if (query.topicId) {
-      result = result.filter((q) => q.topicId === query.topicId);
-    }
-
-    if (query.mode === 'unanswered') {
-      const answeredIds = new Set(this.attempts.map((a) => a.questionId));
-      result = result.filter((q) => !answeredIds.has(q.id));
-    } else if (query.mode === 'weak_areas') {
-      const incorrectIds = new Set(
-        this.attempts.filter((a) => !a.isCorrect || a.score < 1.0).map((a) => a.questionId)
-      );
-      const weak = result.filter((q) => incorrectIds.has(q.id));
-      if (weak.length > 0) {
-        result = weak;
-      }
-    }
-
-    if (query.excludeQuestionIds && query.excludeQuestionIds.length > 0) {
-      const excludeSet = new Set(query.excludeQuestionIds);
-      result = result.filter((q) => !excludeSet.has(q.id));
-    }
-
-    if (query.limit && query.limit > 0) {
-      result = result.slice(0, query.limit);
-    }
-
-    return result;
-  }
-
-  async recordAttempt(attempt: AnswerAttempt): Promise<void> {
-    const isFirstAttemptOnThisQuestion = !this.attempts.some(
-      (a) => a.questionId === attempt.questionId
-    );
-    const wasAlreadyCorrect = this.attempts.some(
-      (a) => a.questionId === attempt.questionId && a.isCorrect
-    );
-
-    this.attempts.push(attempt);
-
-    const question = this.questions.find((q) => q.id === attempt.questionId);
-    if (!question) return;
-
-    const topicSummary = this.topics.find((t) => t.topic.id === question.topicId);
-    if (topicSummary) {
-      if (isFirstAttemptOnThisQuestion) {
-        topicSummary.answeredCount += 1;
-      }
-      if (attempt.isCorrect && !wasAlreadyCorrect) {
-        topicSummary.correctCount += 1;
-      }
-    }
-  }
-
-  async getTopicSummaries(): Promise<TopicSummary[]> {
-    return this.topics.map((t) => ({ ...t, topic: { ...t.topic } }));
-  }
-
-  async retrieveForQuestion(
-    questionId: string,
-    _stem: string,
-    _limit?: number
-  ): Promise<RetrievedPassage[]> {
-    return this.passagesMap[questionId] || [];
-  }
-
-  async retrieveIterativeEvidence(
-    questionId: string,
-    stem: string,
-    canonicalAnswer: string,
-    followUpQuery?: string,
-    limit = 2
-  ): Promise<{
-    passages: RetrievedPassage[];
-    tierUsed: 'tier1_direct' | 'tier2_strict_and' | 'tier3_broad_or' | 'none';
-    iterationsRun: string[];
-  }> {
-    const iterationsRun: string[] = [];
-    const results: RetrievedPassage[] = [];
-    const seenIds = new Set<string>();
-
-    // Iteration 1: Direct linked passages
-    iterationsRun.push(`Iteration 1: Checking Tier 1 direct links for ${questionId}`);
-    const direct = this.passagesMap[questionId] || [];
-    for (const p of direct) {
-      if (!seenIds.has(p.passage.id) && results.length < limit) {
-        seenIds.add(p.passage.id);
-        results.push({ ...p, strategy: 'linked' });
-      }
-    }
-    if (results.length >= limit && !followUpQuery) {
-      return { passages: results, tierUsed: 'tier1_direct', iterationsRun };
-    }
-
-    // Extract keywords for Tier 2 & Tier 3 search
-    const rawSearch = followUpQuery?.trim() ? followUpQuery : `${canonicalAnswer} ${stem}`;
-    const keywords = rawSearch
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, ' ')
-      .split(/\s+/)
-      .filter((w) => w.length > 3)
-      .slice(0, 5);
-
-    const allPassages: RetrievedPassage[] = [];
-    for (const list of Object.values(this.passagesMap)) {
-      for (const item of list) {
-        allPassages.push(item);
-      }
-    }
-
-    // Iteration 2: Strict AND match across top 3 keywords
-    if (keywords.length > 0) {
-      const strictTerms = keywords.slice(0, 3);
-      iterationsRun.push(`Iteration 2: Strict AND search for [${strictTerms.join(', ')}]`);
-      for (const candidate of allPassages) {
-        const textLower = candidate.passage.text.toLowerCase();
-        if (
-          !seenIds.has(candidate.passage.id) &&
-          strictTerms.every((kw) => textLower.includes(kw))
-        ) {
-          seenIds.add(candidate.passage.id);
-          results.push({ ...candidate, strategy: 'fts5' });
-          if (results.length >= limit) {
-            return { passages: results, tierUsed: 'tier2_strict_and', iterationsRun };
-          }
-        }
-      }
-    }
-
-    // Iteration 3: Broad OR match across keywords
-    if (keywords.length > 0 && results.length < limit) {
-      iterationsRun.push(`Iteration 3: Broad OR fallback for [${keywords.join(', ')}]`);
-      for (const candidate of allPassages) {
-        const textLower = candidate.passage.text.toLowerCase();
-        if (
-          !seenIds.has(candidate.passage.id) &&
-          keywords.some((kw) => textLower.includes(kw))
-        ) {
-          seenIds.add(candidate.passage.id);
-          results.push({ ...candidate, strategy: 'fts5' });
-          if (results.length >= limit) {
-            return { passages: results, tierUsed: 'tier3_broad_or', iterationsRun };
-          }
-        }
-      }
-    }
-
-    return {
-      passages: results,
-      tierUsed: results.length > 0 ? 'tier1_direct' : 'none',
-      iterationsRun,
-    };
-  }
-
-  async searchPassages(query: string, _limit?: number): Promise<RetrievedPassage[]> {
-    const norm = query.toLowerCase();
-    const matches: RetrievedPassage[] = [];
-    for (const passages of Object.values(this.passagesMap)) {
-      for (const p of passages) {
-        if (p.passage.text.toLowerCase().includes(norm)) {
-          matches.push(p);
-        }
-      }
-    }
-    return matches;
-  }
-}
 
 /**
  * On-device local LLM port providing dynamic, context-grounded streaming generation
@@ -435,11 +229,17 @@ class LocalMockLlmPort implements LocalLlmPort {
 }
 
 export default function App() {
+  const [isReady, setIsReady] = useState(false);
+  const [dependencies, setDependencies] = useState<{
+    controller: ReviewSessionController;
+    repo: QuestionRepository;
+  } | null>(null);
   const [currentScreen, setCurrentScreen] = useState<'home' | 'quiz'>('home');
   const [selectedMode, setSelectedMode] = useState<StudyMode>('all');
   const [sessionFormat, setSessionFormat] = useState<SessionFormat>('quiz');
   const [activeTopicId, setActiveTopicId] = useState<string | undefined>(undefined);
-  const [topicSummaries, setTopicSummaries] = useState<TopicSummary[]>(LIVE_TOPICS);
+  const [topicSummaries, setTopicSummaries] = useState<TopicSummary[]>([]);
+  const [controllerState, setControllerState] = useState<ReviewSessionState | null>(null);
 
   const modelStatus: ModelRuntimeStatus = {
     state: 'ready',
@@ -448,51 +248,64 @@ export default function App() {
     peakMemoryBytes: 850 * 1024 * 1024,
   };
 
-  // Instantiate clean architecture dependencies once
-  const { controller, repo } = useMemo(() => {
-    const repository = new InMemoryQuestionRepository(
-      LIVE_QUESTIONS,
-      LIVE_TOPICS,
-      LIVE_PASSAGES_MAP
-    );
-    const llmPort = new LocalMockLlmPort();
-    const logger = new DiagnosticsLogger(50);
+  useEffect(() => {
+    let isMounted = true;
+    async function bootstrap() {
+      try {
+        const db = await openContentPackDatabase();
+        const repository = new SqliteQuestionRepository(db);
+        const passageRetriever = new SqlitePassageRetriever(db);
+        const llmPort = new LocalMockLlmPort();
+        const logger = new DiagnosticsLogger(50);
 
-    const getNextQuestion = new GetNextQuestion({ repository });
-    const submitAnswer = new SubmitAnswer(repository);
-    const getExplanationContext = new GetExplanationContext(repository, repository);
-    const explainMore = new ExplainMore(repository, repository, llmPort, logger);
-    const interpretFreeAnswer = new InterpretFreeAnswer(repository, repository, llmPort, logger);
-    const cancelGeneration = new CancelGeneration(logger);
+        const getNextQuestion = new GetNextQuestion({ repository });
+        const submitAnswer = new SubmitAnswer(repository);
+        const getExplanationContext = new GetExplanationContext(repository, passageRetriever);
+        const explainMore = new ExplainMore(repository, passageRetriever, llmPort, logger);
+        const interpretFreeAnswer = new InterpretFreeAnswer(repository, passageRetriever, llmPort, logger);
+        const cancelGeneration = new CancelGeneration(logger);
 
-    const sessionController = new ReviewSessionController({
-      getNextQuestion,
-      submitAnswer,
-      getExplanationContext,
-      explainMore,
-      interpretFreeAnswer,
-      cancelGeneration,
-      logger,
-    });
+        const sessionController = new ReviewSessionController({
+          getNextQuestion,
+          submitAnswer,
+          getExplanationContext,
+          explainMore,
+          interpretFreeAnswer,
+          cancelGeneration,
+          logger,
+        });
 
-    return { controller: sessionController, repo: repository };
+        const summaries = await repository.getTopicSummaries();
+        if (isMounted) {
+          setDependencies({ controller: sessionController, repo: repository });
+          setTopicSummaries(summaries);
+          setControllerState(sessionController.getState());
+          setIsReady(true);
+        }
+      } catch (err) {
+        console.error('Failed to initialize content pack database:', err);
+      }
+    }
+    bootstrap();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
-  const [controllerState, setControllerState] = useState<ReviewSessionState>(
-    controller.getState()
-  );
-
   useEffect(() => {
-    const unsubscribe = controller.subscribe((newState) => {
+    if (!dependencies) return;
+    const unsubscribe = dependencies.controller.subscribe((newState) => {
       setControllerState(newState);
     });
     return unsubscribe;
-  }, [controller]);
+  }, [dependencies]);
 
   const refreshTopics = useCallback(async () => {
-    const updated = await repo.getTopicSummaries();
+    if (!dependencies) return;
+    const updated = await dependencies.repo.getTopicSummaries();
     setTopicSummaries([...updated]);
-  }, [repo]);
+  }, [dependencies]);
 
   const handleStartSession = useCallback(
     async (
@@ -500,11 +313,12 @@ export default function App() {
       mode: StudyMode = 'all',
       format: SessionFormat = 'quiz'
     ) => {
+      if (!dependencies) return;
       setActiveTopicId(topicId);
       setSelectedMode(mode);
       setSessionFormat(format);
 
-      await controller.startSession({
+      await dependencies.controller.startSession({
         query: { topicId, mode },
         shuffleChoices: true,
         sessionSeed: `session_${Date.now()}`,
@@ -512,20 +326,22 @@ export default function App() {
 
       setCurrentScreen('quiz');
     },
-    [controller]
+    [dependencies]
   );
 
   const handleSubmitAnswer = useCallback(async () => {
-    await controller.submitCurrentAnswer();
+    if (!dependencies) return;
+    await dependencies.controller.submitCurrentAnswer();
     await refreshTopics();
-  }, [controller, refreshTopics]);
+  }, [dependencies, refreshTopics]);
 
   const handleRateCard = useCallback(
     async (rating: 'again' | 'know') => {
-      await controller.rateCurrentFlashcard(rating);
+      if (!dependencies) return;
+      await dependencies.controller.rateCurrentFlashcard(rating);
       await refreshTopics();
     },
-    [controller, refreshTopics]
+    [dependencies, refreshTopics]
   );
 
   const handleRestartSession = useCallback(() => {
@@ -536,6 +352,16 @@ export default function App() {
     setCurrentScreen('home');
     await refreshTopics();
   }, [refreshTopics]);
+
+  if (!isReady || !dependencies || !controllerState) {
+    return (
+      <View style={styles.loadingContainer}>
+        <StatusBar barStyle="dark-content" />
+        <ActivityIndicator size="large" color={colors.brand.primary} />
+        <Text style={styles.loadingText}>Loading Content Pack...</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -567,19 +393,19 @@ export default function App() {
           aiError={controllerState.aiError}
           isSessionCompleted={controllerState.isSessionCompleted}
           sessionFormat={sessionFormat}
-          onSelectChoice={(id) => controller.selectChoice(id)}
-          onChangeFreeText={(text) => controller.setFreeTextInput(text)}
+          onSelectChoice={(id) => dependencies.controller.selectChoice(id)}
+          onChangeFreeText={(text) => dependencies.controller.setFreeTextInput(text)}
           onSubmitAnswer={handleSubmitAnswer}
-          onRequestExplainMore={(lang) => controller.requestExplainMore(lang)}
+          onRequestExplainMore={(lang) => dependencies.controller.requestExplainMore(lang)}
           onRequestInterpretFreeAnswer={() =>
-            controller.requestFreeAnswerInterpretation()
+            dependencies.controller.requestFreeAnswerInterpretation()
           }
           onRequestConsensusInterpretation={() =>
-            controller.requestConsensusInterpretation()
+            dependencies.controller.requestConsensusInterpretation()
           }
-          onRequestClarification={(query) => controller.requestClarification(query)}
-          onCancelGeneration={() => controller.cancelActiveAiGeneration()}
-          onNextQuestion={() => controller.nextQuestion()}
+          onRequestClarification={(query) => dependencies.controller.requestClarification(query)}
+          onCancelGeneration={() => dependencies.controller.cancelActiveAiGeneration()}
+          onNextQuestion={() => dependencies.controller.nextQuestion()}
           onRateCard={handleRateCard}
           onRestartSession={handleRestartSession}
           onReturnHome={handleReturnHome}
@@ -593,5 +419,17 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.neutral.surface,
+  },
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: colors.neutral.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 16,
+  },
+  loadingText: {
+    fontSize: 15,
+    color: colors.neutral.textSecondary,
+    fontWeight: '500',
   },
 });

@@ -8,7 +8,14 @@ const __dirname = path.dirname(__filename);
 
 const config = getDefaultConfig(__dirname);
 
+if (!config.resolver.assetExts.includes('db')) {
+  config.resolver.assetExts.push('db');
+}
+
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (moduleName.startsWith('node:')) {
+    return { type: 'empty' };
+  }
   if (moduleName.startsWith('./') || moduleName.startsWith('../')) {
     const extMatch = moduleName.match(/\.(js|jsx|mjs|cjs)$/);
     if (extMatch) {

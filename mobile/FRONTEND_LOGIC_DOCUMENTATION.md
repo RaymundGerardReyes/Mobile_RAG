@@ -15,45 +15,43 @@ An exhaustive code audit of the frontend codebase in `D:\MobileApp Rag\mobile` r
 
 1. **The Live Expo App ([`App.tsx`](file:///d:/MobileApp%20Rag/mobile/App.tsx))**
    - The active entry point executed by `expo/AppEntry.js`.
-   - Loads **200 authentic Civil Service Exam questions** (4 topics, 68 passages) from the bundled [`live_content_pack.json`](file:///d:/MobileApp%20Rag/mobile/assets/live_content_pack.json), extracted from `reviewer.pdf` via the deterministic training pipeline.
-   - Instantiates the production [`ReviewSessionController`](file:///d:/MobileApp%20Rag/mobile/src/controllers/review_session_controller.ts) with all 9 application use cases (`GetNextQuestion`, `SubmitAnswer`, `GetExplanationContext`, `ExplainMore`, `InterpretFreeAnswer`, `CancelGeneration`).
-   - Uses an `InMemoryQuestionRepository` (implementing both `QuestionRepository` and `PassageRetriever`) that dynamically tracks student attempts and recalculates topic summaries.
+   - Initializes and queries the compiled SQLite database [`content_pack.db`](file:///d:/MobileApp%20Rag/mobile/assets/content_pack.db) (containing authentic Civil Service Exam questions, topics, passages, choices, and FTS5 BM25 index) via `openContentPackDatabase()` from `./src/data/sqlite/db_factory.js`.
+   - Binds [`SqliteQuestionRepository`](file:///d:/MobileApp%20Rag/mobile/src/data/sqlite/sqlite_question_repository.ts) and [`SqlitePassageRetriever`](file:///d:/MobileApp%20Rag/mobile/src/data/sqlite/sqlite_passage_retriever.ts) directly into application use cases, completely eliminating static JSON dependencies.
+   - Instantiates the production [`ReviewSessionController`](file:///d:/MobileApp%20Rag/mobile/src/controllers/review_session_controller.ts) with all application use cases (`GetNextQuestion`, `SubmitAnswer`, `GetExplanationContext`, `ExplainMore`, `InterpretFreeAnswer`, `CancelGeneration`).
    - LLM port uses `LocalMockLlmPort` for streaming AI explanations (bilingual EN/Filipino) and JSON-schema-compliant rubric verdicts until on-device Qwen adapter is deployed.
 2. **The Production Clean Architecture Core ([`mobile/src/`](file:///d:/MobileApp%20Rag/mobile/src))**
-   - A fully tested (78/78 passing tests), modular, headless hexagonal architecture.
-   - Encapsulated within connected UI containers ([`ConnectedReviewHomeScreen`](file:///d:/MobileApp%20Rag/mobile/src/features/review/ReviewHomeScreen.tsx#L295-L338), [`ConnectedQuizReviewScreen`](file:///d:/MobileApp%20Rag/mobile/src/features/quiz/QuizReviewScreen.tsx#L601-L648)), the headless state machine [`ReviewSessionController`](file:///d:/MobileApp%20Rag/mobile/src/controllers/review_session_controller.ts), 9 application use cases, SQLite repositories with FTS5 BM25 search, and an on-device LLM service with 4-tier output validation.
-   - The SQLite adapter path (`ExpoSqliteDatabase` → `SqliteQuestionRepository` / `SqlitePassageRetriever`) is ready for native deployment when the app transitions from Expo Go to a prebuild.
+   - A fully tested, modular, headless hexagonal architecture.
+   - Encapsulated within connected UI containers ([`ConnectedReviewHomeScreen`](file:///d:/MobileApp%20Rag/mobile/src/features/review/ReviewHomeScreen.tsx#L295-L338), [`ConnectedQuizReviewScreen`](file:///d:/MobileApp%20Rag/mobile/src/features/quiz/QuizReviewScreen.tsx#L601-L648)), the headless state machine [`ReviewSessionController`](file:///d:/MobileApp%20Rag/mobile/src/controllers/review_session_controller.ts), application use cases, cross-platform SQLite database factory, and an on-device LLM service with 4-tier output validation.
+   - The SQLite adapter path (`openContentPackDatabase` → `SqliteQuestionRepository` / `SqlitePassageRetriever`) operates across both Node.js test runner and native Expo SQLite runtimes.
 
 ```mermaid
 flowchart TD
     subgraph LIVE_EXPO_RUNTIME["Live Expo App (AppEntry.js -> App.tsx)"]
-        APP["App.tsx\n(Live Data + ReviewSessionController)"]
+        APP["App.tsx\n(Bootstrap + State Wiring)"]
         HOME_UI["ReviewHomeScreen.tsx\n(Presentational)"]
         QUIZ_UI["QuizReviewScreen.tsx\n(Presentational)"]
-        LIVE_DATA["live_content_pack.json\n(200 Questions, 68 Passages, 4 Topics)"]
-        REPO["InMemoryQuestionRepository\n(QuestionRepository + PassageRetriever)"]
+        SQL_DB["content_pack.db\n(SQLite + FTS5 BM25 Virtual Table)"]
+        FACTORY["openContentPackDatabase()\n(db_factory.ts)"]
+        REPO["SqliteQuestionRepository\n(Topic Mastery & Questions)"]
+        RETRIEVER["SqlitePassageRetriever\n(Tier 1-3 Iterative RAG)"]
         CTRL["ReviewSessionController\n(Pure State Machine)"]
-        USE_CASES["9 Application Use Cases\n(GetNextQuestion, SubmitAnswer, ExplainMore...)"]
+        USE_CASES["Application Use Cases\n(GetNextQuestion, SubmitAnswer, ExplainMore...)"]
         LLM["LocalMockLlmPort\n(Streaming AI Explanations)"]
+        
+        APP --> FACTORY
+        FACTORY --> SQL_DB
+        APP --> REPO
+        APP --> RETRIEVER
+        REPO --> SQL_DB
+        RETRIEVER --> SQL_DB
         APP --> HOME_UI
         APP --> QUIZ_UI
         APP --> CTRL
         CTRL --> USE_CASES
         USE_CASES --> REPO
+        USE_CASES --> RETRIEVER
         USE_CASES --> LLM
-        REPO -.-> LIVE_DATA
     end
-
-    subgraph NATIVE_ADAPTERS["Native Adapters (Ready for Prebuild Deployment)"]
-        EXPO_DB["ExpoSqliteDatabase"]
-        SQL_REPO["SqliteQuestionRepository"]
-        SQL_PASS["SqlitePassageRetriever"]
-        LLM_SVC["LocalLlmService\n(On-Device Qwen LoRA)"]
-        EXPO_DB --> SQL_REPO
-        EXPO_DB --> SQL_PASS
-    end
-
-    LIVE_EXPO_RUNTIME -.->|"Swap via DI\n(content_pack.db)"| NATIVE_ADAPTERS
 ```
 
 ---
@@ -71,7 +69,7 @@ The codebase contains **no URL-based routing or Expo Router (`expo-router`)**.
 
 | Requested Concept | Codebase Location | Actual Runtime Status in `App.tsx` | True Architectural Capability |
 | :--- | :--- | :--- | :--- |
-| **`/goal`** | [`ReviewHomeScreen.tsx#L64-L126`](file:///d:/MobileApp%20Rag/mobile/src/features/review/ReviewHomeScreen.tsx)<br>[`sqlite_question_repository.ts#L125-L157`](file:///d:/MobileApp%20Rag/mobile/src/data/sqlite/sqlite_question_repository.ts) | **Live.** Renders 4 real subject cards from `live_content_pack.json` via `InMemoryQuestionRepository.getTopicSummaries()`. | Computes subject mastery, answered counts, accuracy badges, and remaining review counts (`"X left"`). |
+| **`/goal`** | [`ReviewHomeScreen.tsx#L64-L126`](file:///d:/MobileApp%20Rag/mobile/src/features/review/ReviewHomeScreen.tsx)<br>[`sqlite_question_repository.ts#L125-L157`](file:///d:/MobileApp%20Rag/mobile/src/data/sqlite/sqlite_question_repository.ts) | **Live.** Renders authentic subject cards from `content_pack.db` via `SqliteQuestionRepository.getTopicSummaries()`. | Computes subject mastery, answered counts, accuracy badges, and remaining review counts (`"X left"`). |
 | **`/learn`** | [`QuizReviewScreen.tsx#L207-L264`](file:///d:/MobileApp%20Rag/mobile/src/features/quiz/QuizReviewScreen.tsx)<br>[`CorePrimitives.tsx#L618-L685`](file:///d:/MobileApp%20Rag/mobile/src/components/CorePrimitives.tsx) | Rendered when `sessionFormat === 'flashcards'`. | Flip-to-reveal flashcard component. *Note:* Both "Review Again" and "Know It" currently invoke `onNextQuestion` without persisting rating. |
 | **`/plan`** | [`ReviewHomeScreen.tsx#L145-L178`](file:///d:/MobileApp%20Rag/mobile/src/features/review/ReviewHomeScreen.tsx)<br>[`get_next_question.ts#L33-L70`](file:///d:/MobileApp%20Rag/mobile/src/application/use_cases/get_next_question.ts) | Filter selection works in UI (`'all'`, `'unanswered'`, `'weak_areas'`). | Configures question filtering; `GetNextQuestion` runs Mulberry32 PRNG choice shuffling with positional option protection. |
 | **`/grill-me`** | [`QuizReviewScreen.tsx#L267-L427`](file:///d:/MobileApp%20Rag/mobile/src/features/quiz/QuizReviewScreen.tsx)<br>[`scoring.ts#L1-L100`](file:///d:/MobileApp%20Rag/mobile/src/domain/scoring.ts) | Active in `App.tsx` via `scoreMultipleChoice` & `scoreExactIdentification`. | High-intensity quiz with 58pt touch targets, millisecond elapsed timers (`durationMs`), deterministic grading, and textbook evidence cards. |
@@ -86,16 +84,19 @@ The codebase contains **no URL-based routing or Expo Router (`expo-router`)**.
 Acts as the top-level container coordinating navigation and user gestures.
 
 #### State Variables:
+- `isReady: boolean` (Asynchronous SQLite database bootstrap completion flag).
 - `currentScreen: 'home' | 'quiz'` (Default: `'home'`).
 - `selectedMode: StudyMode` (`'all' | 'unanswered' | 'weak_areas'`).
 - `sessionFormat: SessionFormat` (`'quiz' | 'flashcards'`).
 - `activeTopicId: string | undefined` (Currently selected topic filter).
-- `topicSummaries: TopicSummary[]` (Initialized from `LIVE_TOPICS` — 4 authentic subjects).
+- `topicSummaries: TopicSummary[]` (Dynamically loaded from SQLite database via `repo.getTopicSummaries()`).
 - `controllerState: ReviewSessionState` (Subscribed from `ReviewSessionController` — includes `currentQuestion`, `currentIndex`, `totalQuestions`, `selectedChoiceId`, `freeTextInput`, `submissionResult`, `supportingPassages`, `sourcePages`, `aiExplanation`, `streamingAiText`, `freeAnswerEvaluation`, `isGeneratingAi`, `aiError`, `isSessionCompleted`).
 - `modelStatus: ModelRuntimeStatus` (Simulated status: `{ state: 'ready', peakMemoryBytes: 850 * 1024 * 1024 }`).
 
-#### Dependencies (instantiated via `useMemo`):
-- `InMemoryQuestionRepository` — loaded with `LIVE_QUESTIONS` (200), `LIVE_TOPICS` (4), `LIVE_PASSAGES_MAP` (68 passages mapped to question IDs).
+#### Dependencies (instantiated asynchronously on bootstrap):
+- `openContentPackDatabase()` — resolves and opens `content_pack.db` via `NodeSqliteDatabase` in Node.js or `ExpoSqliteDatabase` in React Native.
+- `SqliteQuestionRepository` — SQLite implementation of `QuestionRepository` tracking learner attempts and topic summaries.
+- `SqlitePassageRetriever` — SQLite implementation of `PassageRetriever` supporting 3-tier iterative RAG (direct links and FTS5 BM25 search).
 - `LocalMockLlmPort` — streaming bilingual AI explanations (EN/Filipino) and JSON rubric verdicts.
 - `ReviewSessionController` — wired with `GetNextQuestion`, `SubmitAnswer`, `GetExplanationContext`, `ExplainMore`, `InterpretFreeAnswer`, `CancelGeneration`.
 - `DiagnosticsLogger` — ring buffer (capacity 50) for AI run traces.
@@ -393,7 +394,7 @@ The test suite covers **100% pure Node.js domain, application, and data logic**.
 
 | Task # | Area | File(s) to Modify | Exact Required Change |
 | :--- | :--- | :--- | :--- |
-| **1** | **Native SQLite Swap** | [`App.tsx`](file:///d:/MobileApp%20Rag/mobile/App.tsx) | Replace `InMemoryQuestionRepository` with `ExpoSqliteDatabase` → `SqliteQuestionRepository` / `SqlitePassageRetriever` when building a native prebuild (requires `expo-sqlite`). |
+| **1** | **Native SQLite Data Layer** | [`App.tsx`](file:///d:/MobileApp%20Rag/mobile/App.tsx) | **COMPLETED.** Initialized via `openContentPackDatabase()` with cross-runtime support (`NodeSqliteDatabase` in tests, `ExpoSqliteDatabase` in native app) and wired to `SqliteQuestionRepository` / `SqlitePassageRetriever`. |
 | **2** | **On-Device LLM Adapter** | [`App.tsx`](file:///d:/MobileApp%20Rag/mobile/App.tsx) | Replace `LocalMockLlmPort` with `LocalLlmService` backed by the Qwen LoRA adapter once Stage 5 training is complete and the `.gguf` model is bundled. |
 | **3** | **Real Token Streaming** | [`explain_more.ts`](file:///d:/MobileApp%20Rag/mobile/src/application/use_cases/explain_more.ts)<br>[`review_session_controller.ts`](file:///d:/MobileApp%20Rag/mobile/src/controllers/review_session_controller.ts) | Add `onChunk?: (chunk: string) => void` callback to `ExplainMoreRequest` and pass it from `requestExplainMore` to update `streamingAiText` in real time. |
 | **4** | **Optimize Dashboard Query** | [`sqlite_question_repository.ts`](file:///d:/MobileApp%20Rag/mobile/src/data/sqlite/sqlite_question_repository.ts#L125-L157) | Replace the N+1 loop with a single aggregated `GROUP BY q.topic_id` query. |

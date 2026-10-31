@@ -112,6 +112,16 @@ In modern Hugging Face `transformers` (v4.45+) and `trl` (v0.12+), `TrainingArgu
   1. **Dynamic Hardware Flag Assignment**: Whenever instantiating `SFTConfig` or `TrainingArguments`, always pass both `fp16=cuda_available` and `use_cpu=not cuda_available` (or `fp16=torch.cuda.is_available()`, `use_cpu=not torch.cuda.is_available()`).
   2. **Automated Verification**: Notebook and training test suites must assert that `use_cpu=not cuda_available` is present in code cells and that pipeline training completes deterministically regardless of whether CUDA is available.
 
+## 12. Token-Bounded SFT Clamping, Atomic Mobile Deployment & Dynamic Artifact Testing
+To maintain end-to-end alignment between the Python training pipeline and the mobile SQLite runtime:
+- **Token-Bounded SFT Passage Clamping (`_clamp_passage_words`)**:
+  - In `annotation.py`, `export_sft_chatml_jsonl()` and `build_iterative_sft_chatml_dataset()` must clamp retrieved passage excerpts (default `max_passage_words=140`) so that `<system>`, `<context>`, `<task>`, and `<|im_start|>assistant` blocks never exceed the 512-token context limit and truncate target labels.
+- **Atomic CLI Mobile Deployment (`deploy-mobile`)**:
+  - Deploying `training/artifacts/content_pack.db` to `mobile/assets/content_pack.db` must use `deploy_content_pack_to_mobile()` (`ai-tutor-pipeline deploy-mobile`), performing an atomic temp-file swap (`tempfile` + `os.replace`), verifying SHA-256 cryptographic parity, and deleting any legacy `mobile/assets/live_content_pack.json`.
+- **Dynamic Artifact-Driven Test Suites**:
+  - `test_reviewer_ingestion.py`, `test_adversarial_content_pack.py`, and `mobile/tests/data/deployed_content_pack.test.ts` must never hardcode brittle byte sizes (e.g., `659456`). Instead, they must assert cryptographic SHA-256 parity between `training/artifacts/content_pack.db` and `mobile/assets/content_pack.db`, dynamically compare SQLite row counts against JSONL artifact line counts when present, and enforce minimum production thresholds (`>= 15` questions, `>= 8` passages, `>= 1` topic).
+
+
 
 
 
